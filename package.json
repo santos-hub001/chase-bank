@@ -1,0 +1,24 @@
+{
+  "name": "chase-bank",
+  "version": "1.0.0",
+  "description": "Chase Bank - Online banking platform for transfers and money management",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "test": "node server/test-e2e.js"
+  },
+  "author": "SANTOS",
+  "license": "MIT",
+  "devDependencies": {
+    "jsdom": "^30.0.1",
+    "puppeteer-core": "^25.11.0"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "express": "^5.2.1"
+  },
+  "devDependencies": {
+    "jsdom": "^30.0.1"
+  }
+}

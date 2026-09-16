@@ -1,0 +1,31 @@
+# Dependencies
+node_modules/
+
+# Runtime / databases (user-specific demo data — recreated on fresh boot)
+data/*.db
+data/*.db-*
+data/*.sqlite*
+data/*.db-wal
+data/*.db-shm
+data/*.txt
+data/*.json
+server/data/
+*.db
+*.sqlite
+
+# Logs & scratch
+*.log
+*.done
+server/_*
+server/__*
+server/debug-*.js
+server/_probe_*.js
+server/browsershots/
+public/browsershots/
+server/puppeteer-*
+
+# OS / editor
+Thumbs.db
+Desktop.ini
+.vscode/
+.DS_Store
