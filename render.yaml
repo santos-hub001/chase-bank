@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: chase-bank
+    runtime: node
+    plan: free
+    autoDeploy: true
+    buildCommand: npm ci --omit=dev
+    startCommand: node server/index.js
+    healthCheckPath: /api/health
+    envVars:
+      - key: PORT
+        value: 10000
+      - key: NODE_ENV
+        value: production
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: DISABLE_DEV_SEED
+        value: "false"
