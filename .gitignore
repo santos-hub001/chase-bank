@@ -1,17 +1,21 @@
 # Dependencies
 node_modules/
 
-# Runtime / databases (user-specific demo data — recreated on fresh boot)
-data/*.db
-data/*.db-*
-data/*.sqlite*
+# Critical app data (SQLite database) — INCLUDED in this repo
+# (user data here is demo/build-seeded: chasebank.test emails, demo phones,
+#  bcrypt-hashed passwords/PINs only. Registered users re-created on first boot.)
+data/chasebank.db
+
+# SQLite transient files — WAL/SHM/journal are run-time only, never committed
 data/*.db-wal
 data/*.db-shm
+data/*.db-journal
+data/*-wal
+data/*-shm
+
+# Demo seed marker (readme for boot; not app data)
+data/__boot.txt
 data/*.txt
-data/*.json
-server/data/
-*.db
-*.sqlite
 
 # Logs & scratch
 *.log
@@ -24,9 +28,11 @@ server/browsershots/
 public/browsershots/
 server/puppeteer-*
 
+# Deploy helper (one-time, needs your interactive GitHub login — stays local)
+deploy-to-github.ps1
+
 # OS / editor
 Thumbs.db
 Desktop.ini
 .vscode/
 .DS_Store
-deploy-to-github.ps1
