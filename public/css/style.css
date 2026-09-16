@@ -526,6 +526,77 @@ input:disabled { opacity: 0.6; cursor: not-allowed; }
   box-shadow: var(--shadow-sm);
   cursor: pointer;
 }
+.avatar img, .p-avatar img {
+  width: 100%; height: 100%;
+  object-fit: cover;
+  border-radius: 50%;
+  display: block;
+}
+
+/* ---------- Profile hero avatar (with photo edit) ---------- */
+.p-avatar-wrap { position: relative; flex-shrink: 0; }
+.ava-edit {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  width: 28px; height: 28px;
+  border-radius: 50%;
+  border: 2.5px solid #0b2545;
+  background: #ffffff;
+  color: var(--navy);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+  box-shadow: var(--shadow-sm);
+  transition: transform 0.15s, background 0.15s;
+}
+.ava-edit:hover { transform: scale(1.1); background: var(--blue-soft); }
+.ava-edit svg { width: 14px; height: 14px; }
+.ava-edit:disabled { opacity: 0.7; cursor: default; }
+
+/* ---------- Account rows (My Accounts) ---------- */
+.account-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--line);
+}
+.account-row:last-child { border-bottom: none; }
+.acc-ic {
+  width: 44px; height: 44px;
+  border-radius: 12px;
+  background: var(--gold-soft);
+  color: var(--gold);
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.acc-ic svg { width: 20px; height: 20px; }
+.acc-meta { flex: 1; min-width: 0; }
+.acc-name { font-size: 15px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+.acc-badge {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.6px;
+  color: var(--navy);
+  background: var(--gold-soft);
+  border: 1px solid rgba(201, 162, 75, 0.4);
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+.acc-sub { font-size: 12.5px; color: var(--muted); margin-top: 2px; }
+.acc-bal { font-size: 16px; font-weight: 800; white-space: nowrap; }
+.acc-move { white-space: nowrap; }
+
+select.input {
+  appearance: auto;
+  cursor: pointer;
+  background-image: none;
+}
+
+@media (max-width: 480px) {
+  .account-row { flex-wrap: wrap; }
+  .acc-move { width: 100%; }
+}
 
 .balance-card {
   margin-top: 22px;

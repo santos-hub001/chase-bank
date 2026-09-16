@@ -6,7 +6,7 @@ const db = require('./db');
 
 const app = express();
 
-app.use(express.json());
+app.use(express.json({ limit: '1mb' }));
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
 const SESSION_DAYS = 7;
@@ -124,6 +124,54 @@ function getSessionUser(req) {
   return row || null;
 }
 
+function userAccounts(userId) {
+  return db.prepare('SELECT * FROM accounts WHERE user_id = ? ORDER BY is_default DESC, id ASC').all(userId);
+}
+
+function userTotalBalance(userId) {
+  const row = db.prepare('SELECT COALESCE(SUM(balance), 0) AS total FROM accounts WHERE user_id = ?').get(userId);
+  return Math.round((Number(row.total) || 0) * 100) / 100;
+}
+
+function syncUserBalance(userId) {
+  const total = userTotalBalance(userId);
+  db.prepare('UPDATE users SET balance = ? WHERE id = ?').run(total, userId);
+  return total;
+}
+
+function defaultAccount(userId) {
+  return db.prepare('SELECT * FROM accounts WHERE user_id = ? AND is_default = 1').get(userId);
+}
+
+function sourceAccount(userId, accountId) {
+  if (accountId != null) {
+    const acct = db.prepare('SELECT * FROM accounts WHERE id = ? AND user_id = ?').get(Number(accountId), userId);
+    if (!acct) return null;
+    return acct;
+  }
+  return defaultAccount(userId);
+}
+
+function newAccountNumber() {
+  for (let i = 0; i < 20; i++) {
+    const n = String(crypto.randomInt(1000000000, 10000000000));
+    if (!db.prepare('SELECT 1 FROM accounts WHERE account_number = ?').get(n)) return n;
+  }
+  return '2' + String(Date.now()).slice(-9);
+}
+
+function insertTransaction({ userId, type, category, amount, counterparty, description, reference, balanceAfter, accountId }) {
+  db.prepare(`
+    INSERT INTO transactions (user_id, type, category, amount, counterparty, description, reference, balance_after, account_id, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(userId, type, category, amount, counterparty, description, reference, balanceAfter, accountId, now());
+}
+
+function pushNotification(userId, message, type) {
+  db.prepare('INSERT INTO notifications (user_id, message, type, created_at) VALUES (?, ?, ?, ?)')
+    .run(userId, message, type, now());
+}
+
 function setAuthCookie(res, token) {
   res.cookie('chase_session', token, {
     httpOnly: true,
@@ -150,8 +198,10 @@ app.get('/api/auth/me', (req, res) => {
     email: user.email,
     phone: user.phone,
     account_number: user.account_number,
-    balance: user.balance,
-    created_at: user.created_at
+    balance: userTotalBalance(user.id),
+    avatar: user.avatar || null,
+    created_at: user.created_at,
+    accounts: userAccounts(user.id)
   });
 });
 
@@ -191,15 +241,25 @@ app.post('/api/auth/register', (req, res) => {
 
   const userId = Number(info.lastInsertRowid);
 
-  db.prepare(`
-    INSERT INTO transactions (user_id, type, category, amount, counterparty, description, reference, balance_after, created_at)
-    VALUES (?, 'credit', 'WELCOME_BONUS', 50000, 'CHASE BANK', 'Welcome bonus for opening an account', ?, 50000, ?)
-  `).run(userId, newReference(), now());
+  const accInfo = db.prepare(`
+    INSERT INTO accounts (user_id, account_number, label, balance, is_default, created_at)
+    VALUES (?, ?, 'Main account', 50000, 1, ?)
+  `).run(userId, phoneClean, now());
+  const defaultAccountId = Number(accInfo.lastInsertRowid);
 
-  db.prepare(`
-    INSERT INTO notifications (user_id, message, type, created_at)
-    VALUES (?, ?, 'welcome', ?)
-  `).run(userId, 'Welcome to Chase Bank! A $50,000 welcome bonus has been credited to your account.', now());
+  insertTransaction({
+    userId,
+    type: 'credit',
+    category: 'WELCOME_BONUS',
+    amount: 50000,
+    counterparty: 'CHASE BANK',
+    description: 'Welcome bonus for opening an account',
+    reference: newReference(),
+    balanceAfter: 50000,
+    accountId: defaultAccountId
+  });
+
+  pushNotification(userId, 'Welcome to Chase Bank! A $50,000 welcome bonus has been credited to your account.', 'welcome');
 
   const token = createSession(userId);
   setAuthCookie(res, token);
@@ -242,8 +302,10 @@ app.get('/api/account', (req, res) => {
     email: user.email,
     phone: user.phone,
     account_number: user.account_number,
-    balance: user.balance,
-    created_at: user.created_at
+    balance: userTotalBalance(user.id),
+    avatar: user.avatar || null,
+    created_at: user.created_at,
+    accounts: userAccounts(user.id)
   });
 });
 
@@ -258,7 +320,7 @@ app.post('/api/transfer', (req, res) => {
   const user = getSessionUser(req);
   if (!user) return res.status(401).json({ error: 'Not authenticated' });
 
-  const { recipient, amount, pin, description } = req.body || {};
+  const { recipient, amount, pin, description, account_id } = req.body || {};
   const recipientPhone = cleanPhone(recipient);
   const amt = sanitizeAmount(amount);
 
@@ -267,47 +329,63 @@ app.post('/api/transfer', (req, res) => {
   if (!/^\d{4}$/.test(String(pin || ''))) return res.status(400).json({ error: 'Enter your 4-digit transfer pin' });
   if (!bcrypt.compareSync(String(pin), user.transfer_pin)) return res.status(401).json({ error: 'Incorrect transfer pin' });
 
-  if (recipientPhone === user.phone) return res.status(400).json({ error: 'You cannot transfer money to your own account' });
+  const from = sourceAccount(user.id, account_id);
+  if (!from) return res.status(400).json({ error: 'Select a valid source account' });
+  if (amt > from.balance) return res.status(400).json({ error: 'Insufficient balance for this transfer' });
+
+  const desc = String(description || '').trim() || 'Bank transfer';
+
+  if (recipientPhone === user.phone) {
+    const to = defaultAccount(user.id);
+    if (!to || from.id === to.id) return res.status(400).json({ error: 'Transfer to your own account is already in that account' });
+
+    db.exec('BEGIN');
+    try {
+      const newFrom = Math.round((from.balance - amt) * 100) / 100;
+      const newTo = Math.round((to.balance + amt) * 100) / 100;
+      db.prepare('UPDATE accounts SET balance = ? WHERE id = ?').run(newFrom, from.id);
+      db.prepare('UPDATE accounts SET balance = ? WHERE id = ?').run(newTo, to.id);
+
+      const ref = newReference();
+      insertTransaction({ userId: user.id, type: 'debit', category: 'TRANSFER', amount: amt, counterparty: `MOVED TO ${to.label.toUpperCase()} (${to.account_number})`, description: desc, reference: ref, balanceAfter: newFrom, accountId: from.id });
+      insertTransaction({ userId: user.id, type: 'credit', category: 'TRANSFER', amount: amt, counterparty: `FROM ${from.label.toUpperCase()} (${from.account_number})`, description: desc, reference: ref, balanceAfter: newTo, accountId: to.id });
+
+      pushNotification(user.id, `You moved $${amt.toLocaleString()} from ${from.label} to ${to.label}.`, 'debit');
+
+      const total = syncUserBalance(user.id);
+      db.exec('COMMIT');
+      return res.json({ message: 'Transfer successful', reference: ref, balance: total });
+    } catch (err) {
+      db.exec('ROLLBACK');
+      console.error(err);
+      return res.status(500).json({ error: 'Transfer failed. Please try again.' });
+    }
+  }
 
   const recipientUser = db.prepare('SELECT * FROM users WHERE phone = ?').get(recipientPhone);
   if (!recipientUser) return res.status(404).json({ error: 'No Chase Bank account found with this phone number' });
 
-  if (amt > user.balance) return res.status(400).json({ error: 'Insufficient balance for this transfer' });
-
-  const desc = String(description || '').trim() || 'Bank transfer';
+  const to = defaultAccount(recipientUser.id);
+  if (!to) return res.status(500).json({ error: 'Recipient account unavailable' });
 
   db.exec('BEGIN');
-
   try {
-    const newBalance = Math.round((user.balance - amt) * 100) / 100;
-    db.prepare('UPDATE users SET balance = ? WHERE id = ?').run(newBalance, user.id);
-
-    const newRecipientBalance = Math.round((recipientUser.balance + amt) * 100) / 100;
-    db.prepare('UPDATE users SET balance = ? WHERE id = ?').run(newRecipientBalance, recipientUser.id);
+    const newFrom = Math.round((from.balance - amt) * 100) / 100;
+    const newTo = Math.round((to.balance + amt) * 100) / 100;
+    db.prepare('UPDATE accounts SET balance = ? WHERE id = ?').run(newFrom, from.id);
+    db.prepare('UPDATE accounts SET balance = ? WHERE id = ?').run(newTo, to.id);
 
     const ref = newReference();
-    db.prepare(`
-      INSERT INTO transactions (user_id, type, category, amount, counterparty, description, reference, balance_after, created_at)
-      VALUES (?, 'debit', 'TRANSFER', ?, ?, ?, ?, ?, ?)
-    `).run(user.id, amt, `SENT TO ${recipientUser.full_name.toUpperCase()} (${recipientPhone})`, desc, ref, newBalance, now());
+    insertTransaction({ userId: user.id, type: 'debit', category: 'TRANSFER', amount: amt, counterparty: `SENT TO ${recipientUser.full_name.toUpperCase()} (${recipientPhone})`, description: desc, reference: ref, balanceAfter: newFrom, accountId: from.id });
+    insertTransaction({ userId: recipientUser.id, type: 'credit', category: 'TRANSFER', amount: amt, counterparty: `FROM ${user.full_name.toUpperCase()} (${user.phone})`, description: desc, reference: ref, balanceAfter: newTo, accountId: to.id });
 
-    db.prepare(`
-      INSERT INTO transactions (user_id, type, category, amount, counterparty, description, reference, balance_after, created_at)
-      VALUES (?, 'credit', 'TRANSFER', ?, ?, ?, ?, ?, ?)
-    `).run(recipientUser.id, amt, `FROM ${user.full_name.toUpperCase()} (${user.phone})`, desc, ref, newRecipientBalance, now());
+    pushNotification(user.id, `You sent $${amt.toLocaleString()} to ${recipientUser.full_name} (${recipientPhone}).`, 'debit');
+    pushNotification(recipientUser.id, `You received $${amt.toLocaleString()} from ${user.full_name} (${user.phone}).`, 'credit');
 
-    db.prepare(`
-      INSERT INTO notifications (user_id, message, type, created_at)
-      VALUES (?, ?, 'debit', ?)
-    `).run(user.id, `You sent $${amt.toLocaleString()} to ${recipientUser.full_name} (${recipientPhone}).`, now());
-
-    db.prepare(`
-      INSERT INTO notifications (user_id, message, type, created_at)
-      VALUES (?, ?, 'credit', ?)
-    `).run(recipientUser.id, `You received $${amt.toLocaleString()} from ${user.full_name} (${user.phone}).`, now());
-
+    const total = syncUserBalance(user.id);
+    syncUserBalance(recipientUser.id);
     db.exec('COMMIT');
-    res.json({ message: 'Transfer successful', reference: ref, balance: newBalance });
+    res.json({ message: 'Transfer successful', reference: ref, balance: total });
   } catch (err) {
     db.exec('ROLLBACK');
     console.error(err);
@@ -319,29 +397,111 @@ app.post('/api/withdraw', (req, res) => {
   const user = getSessionUser(req);
   if (!user) return res.status(401).json({ error: 'Not authenticated' });
 
-  const { amount, pin } = req.body || {};
+  const { amount, pin, account_id } = req.body || {};
   const amt = sanitizeAmount(amount);
 
   if (amt === null) return res.status(400).json({ error: 'Enter a valid amount' });
   if (!/^\d{4}$/.test(String(pin || ''))) return res.status(400).json({ error: 'Enter your 4-digit transfer pin' });
   if (!bcrypt.compareSync(String(pin), user.transfer_pin)) return res.status(401).json({ error: 'Incorrect transfer pin' });
-  if (amt > user.balance) return res.status(400).json({ error: 'Insufficient balance for this withdrawal' });
 
-  const newBalance = Math.round((user.balance - amt) * 100) / 100;
-  db.prepare('UPDATE users SET balance = ? WHERE id = ?').run(newBalance, user.id);
+  const from = sourceAccount(user.id, account_id);
+  if (!from) return res.status(400).json({ error: 'Select a valid source account' });
+  if (amt > from.balance) return res.status(400).json({ error: 'Insufficient balance for this withdrawal' });
+
+  const newBalance = Math.round((from.balance - amt) * 100) / 100;
+  db.prepare('UPDATE accounts SET balance = ? WHERE id = ?').run(newBalance, from.id);
 
   const ref = newReference();
-  db.prepare(`
-    INSERT INTO transactions (user_id, type, category, amount, counterparty, description, reference, balance_after, created_at)
-    VALUES (?, 'debit', 'WITHDRAWAL', ?, 'CASH', 'Cash withdrawal', ?, ?, ?)
-  `).run(user.id, amt, ref, newBalance, now());
+  insertTransaction({ userId: user.id, type: 'debit', category: 'WITHDRAWAL', amount: amt, counterparty: 'CASH', description: 'Cash withdrawal', reference: ref, balanceAfter: newBalance, accountId: from.id });
 
-  db.prepare(`
-    INSERT INTO notifications (user_id, message, type, created_at)
-    VALUES (?, ?, 'debit', ?)
-  `).run(user.id, `You withdrawn $${amt.toLocaleString()} in cash.`, now());
+  pushNotification(user.id, `You withdrawn $${amt.toLocaleString()} in cash.`, 'debit');
 
-  res.json({ message: 'Withdrawal successful', reference: ref, balance: newBalance });
+  const total = syncUserBalance(user.id);
+  res.json({ message: 'Withdrawal successful', reference: ref, balance: total });
+});
+
+app.get('/api/accounts', (req, res) => {
+  const user = getSessionUser(req);
+  if (!user) return res.status(401).json({ error: 'Not authenticated' });
+  res.json(userAccounts(user.id));
+});
+
+app.post('/api/accounts', (req, res) => {
+  const user = getSessionUser(req);
+  if (!user) return res.status(401).json({ error: 'Not authenticated' });
+
+  const { label } = req.body || {};
+  const count = db.prepare('SELECT COUNT(*) AS c FROM accounts WHERE user_id = ?').get(user.id).c;
+  if (count >= 10) return res.status(400).json({ error: 'Maximum of 10 accounts reached' });
+
+  const name = String(label || '').trim().slice(0, 30) || `Account ${count}`;
+  const accountNumber = newAccountNumber();
+
+  const info = db.prepare(`
+    INSERT INTO accounts (user_id, account_number, label, balance, is_default, created_at)
+    VALUES (?, ?, ?, 0, 0, ?)
+  `).run(user.id, accountNumber, name, now());
+
+  const account = db.prepare('SELECT * FROM accounts WHERE id = ?').get(Number(info.lastInsertRowid));
+  pushNotification(user.id, `You opened a new account "${name}" (${accountNumber}). It starts at $0.`, 'info');
+
+  res.status(201).json({ message: 'Account opened successfully', account, accounts: userAccounts(user.id) });
+});
+
+app.post('/api/accounts/move', (req, res) => {
+  const user = getSessionUser(req);
+  if (!user) return res.status(401).json({ error: 'Not authenticated' });
+
+  const { from_account_id, to_account_id, amount, pin } = req.body || {};
+  const from = sourceAccount(user.id, from_account_id);
+  const to = db.prepare('SELECT * FROM accounts WHERE id = ? AND user_id = ?').get(to_account_id, user.id);
+  const amt = sanitizeAmount(amount);
+
+  if (!from || from_account_id == null) return res.status(400).json({ error: 'Select a valid source account' });
+  if (!to) return res.status(400).json({ error: 'Select a valid destination account' });
+  if (from.id === to.id) return res.status(400).json({ error: 'Choose two different accounts' });
+  if (amt === null) return res.status(400).json({ error: 'Enter a valid amount' });
+  if (!/^\d{4}$/.test(String(pin || ''))) return res.status(400).json({ error: 'Enter your 4-digit transfer pin' });
+  if (!bcrypt.compareSync(String(pin), user.transfer_pin)) return res.status(401).json({ error: 'Incorrect transfer pin' });
+  if (amt > from.balance) return res.status(400).json({ error: 'Insufficient balance in the source account' });
+
+  db.exec('BEGIN');
+  try {
+    const newFrom = Math.round((from.balance - amt) * 100) / 100;
+    const newTo = Math.round((to.balance + amt) * 100) / 100;
+    db.prepare('UPDATE accounts SET balance = ? WHERE id = ?').run(newFrom, from.id);
+    db.prepare('UPDATE accounts SET balance = ? WHERE id = ?').run(newTo, to.id);
+
+    const ref = newReference();
+    insertTransaction({ userId: user.id, type: 'debit', category: 'TRANSFER', amount: amt, counterparty: `MOVED TO ${to.label.toUpperCase()} (${to.account_number})`, description: 'Internal transfer', reference: ref, balanceAfter: newFrom, accountId: from.id });
+    insertTransaction({ userId: user.id, type: 'credit', category: 'TRANSFER', amount: amt, counterparty: `FROM ${from.label.toUpperCase()} (${from.account_number})`, description: 'Internal transfer', reference: ref, balanceAfter: newTo, accountId: to.id });
+
+    pushNotification(user.id, `You moved $${amt.toLocaleString()} from ${from.label} to ${to.label}.`, 'debit');
+
+    const total = syncUserBalance(user.id);
+    db.exec('COMMIT');
+    res.json({ message: 'Transfer successful', reference: ref, balance: total });
+  } catch (err) {
+    db.exec('ROLLBACK');
+    console.error(err);
+    res.status(500).json({ error: 'Transfer failed. Please try again.' });
+  }
+});
+
+app.post('/api/profile/avatar', (req, res) => {
+  const user = getSessionUser(req);
+  if (!user) return res.status(401).json({ error: 'Not authenticated' });
+
+  const dataUrl = String((req.body && req.body.avatar) || '');
+  if (!/^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(dataUrl)) {
+    return res.status(400).json({ error: 'Invalid image. Use a PNG, JPEG or WebP picture.' });
+  }
+  if (Buffer.byteLength(dataUrl, 'utf8') > 400 * 1024) {
+    return res.status(400).json({ error: 'Image is too large (max 300 KB)' });
+  }
+
+  db.prepare('UPDATE users SET avatar = ? WHERE id = ?').run(dataUrl, user.id);
+  res.json({ message: 'Profile picture updated', avatar: dataUrl });
 });
 
 app.get('/api/notifications', (req, res) => {

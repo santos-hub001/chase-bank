@@ -59,6 +59,43 @@ const initials = (name) => (name || 'U')
   .map((w) => w[0].toUpperCase())
   .join('');
 
+function escapeAttr(s) {
+  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+}
+
+/* ---------------- Avatar ---------------- */
+function avatarContent(user) {
+  if (user && user.avatar) return `<img src="${user.avatar}" alt="${escapeAttr(user.full_name || 'User')}">`;
+  return initials(user && user.full_name);
+}
+
+/* ---------------- Multiple accounts ---------------- */
+function maskAccount(num) {
+  const s = String(num || '');
+  return s.length > 8 ? s.slice(0, 4) + ' •••• ' + s.slice(-4) : s;
+}
+
+function accountRow(a, i) {
+  return `
+  <div class="account-row" style="animation:fadeSlide .35s ease both; animation-delay:${i * 60}ms">
+    <div class="acc-ic">${a.is_default ? Icons.star : Icons.wallet}</div>
+    <div class="acc-meta">
+      <div class="acc-name">${escapeXml(a.label)} ${a.is_default ? '<span class="acc-badge">MAIN</span>' : ''}</div>
+      <div class="acc-sub">ACCT ${maskAccount(a.account_number)}</div>
+    </div>
+    <div class="acc-bal">${fmtMoney(a.balance)}</div>
+    ${a.is_default ? '' : `<button type="button" class="btn btn-soft btn-sm acc-move" data-move-from="${a.id}" data-move-label="${escapeAttr(a.label)}">${Icons.send} Move Money</button>`}
+  </div>`;
+}
+
+function accountOptions(accounts, selectedId, label) {
+  return accounts.map((a) => {
+    const sel = a.id === selectedId ? ' selected' : '';
+    const extra = a.is_default ? ' — MAIN' : '';
+    return `<option value="${a.id}"${sel}>${escapeXml(a.label)}${extra} — ${fmtShortMoney(a.balance)}</option>`;
+  }).join('');
+}
+
 /* ---------------- Toast ---------------- */
 function toast(message, type = 'info') {
   let stack = $('.toast-stack');
@@ -522,7 +559,7 @@ async function viewDashboard() {
         <h1>Hello, ${firstName} 👋</h1>
         <p>Welcome back to your Chase Bank dashboard</p>
       </div>
-      <a href="#/me"><div class="avatar" title="Profile">${initials(me.full_name)}</div></a>
+      <a href="#/me"><div class="avatar" title="Profile">${avatarContent(me)}</div></a>
     </div>
 
     <div class="balance-card">
@@ -632,7 +669,11 @@ async function viewSend() {
           <div id="recipientResult"></div>
         </div>
         <div class="form-group">
-          <label class="label">Amount ($) <span class="text-muted">— Available: ${fmtShortMoney(me.balance)}</span></label>
+          <label class="label">From Account</label>
+          <select class="input" id="sendAccount">${accountOptions(me.accounts || [], null)}</select>
+        </div>
+        <div class="form-group">
+          <label class="label">Amount ($) <span class="text-muted" id="sendAvailable">— Available: ${fmtShortMoney(me.balance)}</span></label>
           <input class="input" type="number" id="sendAmount" min="1" inputmode="decimal" placeholder="0.00">
         </div>
         <div class="form-group">
@@ -663,7 +704,11 @@ async function viewWithdraw() {
       <form id="withdrawForm" novalidate>
         <div class="form-error" id="withdrawError"></div>
         <div class="form-group">
-          <label class="label">Amount ($) <span class="text-muted">— Available: ${fmtShortMoney(me.balance)}</span></label>
+          <label class="label">From Account</label>
+          <select class="input" id="wdAccount">${accountOptions(me.accounts || [], null)}</select>
+        </div>
+        <div class="form-group">
+          <label class="label">Amount ($) <span class="text-muted" id="wdAvailable">— Available: ${fmtShortMoney(me.balance)}</span></label>
           <input class="input" type="number" id="wdAmount" min="1" inputmode="decimal" placeholder="0.00">
         </div>
         <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:20px;" id="wdQuick">
@@ -776,7 +821,11 @@ async function viewMe() {
       <p>Your account information at a glance.</p>
     </div>
     <div class="profile-hero">
-      <div class="p-avatar">${initials(me.full_name)}</div>
+      <div class="p-avatar-wrap">
+        <div class="p-avatar">${avatarContent(me)}</div>
+        <button type="button" class="ava-edit" id="avaBtn" title="Change profile picture" aria-label="Change profile picture">${Icons.camera}</button>
+        <input type="file" id="avaInput" accept="image/png,image/jpeg,image/webp" hidden>
+      </div>
       <div>
         <h2>${me.full_name}</h2>
         <p>${firstName}, your phone number is your account number — share it freely for transfers.</p>
@@ -798,7 +847,16 @@ async function viewMe() {
       </div>
       <div class="card profile-field">
         <div class="pf-icon">${Icons.wallet}</div>
-        <div><div class="pf-label">Current Balance</div><div class="pf-value">${fmtMoney(me.balance)}</div></div>
+        <div><div class="pf-label">Total Balance</div><div class="pf-value">${fmtMoney(me.balance)}</div></div>
+      </div>
+    </div>
+    <div class="panel-card" style="margin-top:22px;">
+      <div class="panel-head">
+        <h3>${Icons.wallet} My Accounts</h3>
+        <button type="button" class="btn btn-soft btn-sm" id="addAccountBtn">${Icons.plus} Open Account</button>
+      </div>
+      <div style="padding:6px 20px 16px;">
+        ${(me.accounts || []).map((a, i) => accountRow(a, i)).join('')}
       </div>
     </div>
     <div class="panel-card" style="margin-top:22px;">
@@ -1627,6 +1685,14 @@ async function startQuickTransfer() {
 
 /* ---------------- Send flow ---------------- */
 function bindSend() {
+  const acctSel = $('#sendAccount');
+  if (acctSel) {
+    acctSel.addEventListener('change', () => {
+      const opt = acctSel.options[acctSel.selectedIndex];
+      $('#sendAvailable').textContent = '— Available: ' + (opt ? opt.text.split('—').pop() : '');
+    });
+  }
+
   $('#sendPhone').addEventListener('input', debounce(async () => {
     const phone = $('#sendPhone').value.trim();
     const box = $('#recipientResult');
@@ -1660,11 +1726,13 @@ function bindSend() {
 async function openingTransfer(phone, amount, desc, errorId) {
   try {
     const r = await API.recipient(phone);
+    const acctSel = $('#sendAccount');
+    const accountId = acctSel ? Number(acctSel.value) : undefined;
     const result = await openPinModal({
       title: 'Confirm Transfer',
       amount,
       requireLocation: true,
-      onSuccess: (pin) => API.transfer({ recipient: phone, amount, pin, description: desc || '' })
+      onSuccess: (pin) => API.transfer({ recipient: phone, amount, pin, description: desc || '', account_id: accountId })
     });
     if (!result.success) return;
     await showMoneyAnimation({
@@ -1690,6 +1758,13 @@ async function openingTransfer(phone, amount, desc, errorId) {
 
 /* ---------------- Withdraw flow ---------------- */
 function bindWithdraw() {
+  const acctSel = $('#wdAccount');
+  if (acctSel) {
+    acctSel.addEventListener('change', () => {
+      const opt = acctSel.options[acctSel.selectedIndex];
+      $('#wdAvailable').textContent = '— Available: ' + (opt ? opt.text.split('—').pop() : '');
+    });
+  }
   $$('#wdQuick [data-quick]').forEach((btn) => {
     btn.onclick = () => { $('#wdAmount').value = btn.dataset.quick; };
   });
@@ -1698,12 +1773,14 @@ function bindWithdraw() {
     hideFormError('withdrawError');
     const amount = $('#wdAmount').value;
     if (!(Number(amount) > 0)) { showFormError('withdrawError', 'Enter a valid amount'); return; }
+    const acctSel = $('#wdAccount');
+    const accountId = acctSel ? Number(acctSel.value) : undefined;
     try {
       const result = await openPinModal({
         title: 'Confirm Withdrawal',
         amount,
         requireLocation: true,
-        onSuccess: (pin) => API.withdraw({ amount, pin })
+        onSuccess: (pin) => API.withdraw({ amount, pin, account_id: accountId })
       });
       if (!result.success) return;
       await showMoneyAnimation({
@@ -1771,6 +1848,203 @@ function bindCare() {
 /* ---------------- Me ---------------- */
 function bindMe() {
   $('#logoutBtn').onclick = async () => { if (await confirmLogout()) logoutUser(); };
+
+  const avaBtn = $('#avaBtn');
+  const avaInput = $('#avaInput');
+
+  avaBtn.onclick = () => avaInput.click();
+
+  avaInput.addEventListener('change', async (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    if (!/^image\/(png|jpeg|webp)$/.test(file.type)) { toast('Please choose a PNG, JPEG or WebP picture', 'error'); }
+    else if (file.size > 4 * 1024 * 1024) { toast('Image is too large (max 4 MB)', 'error'); }
+    else {
+      avaBtn.disabled = true;
+      const original = avaBtn.innerHTML;
+      avaBtn.innerHTML = '<span class="spinner"></span>';
+      try {
+        const dataUrl = await resizeImage(file, 256);
+        await API.setAvatar({ avatar: dataUrl });
+        toast('Profile picture updated', 'success');
+        router();
+      } catch (err) {
+        toast(err.message || 'Could not update your profile picture', 'error');
+      } finally {
+        avaBtn.disabled = false;
+        avaBtn.innerHTML = original;
+        e.target.value = '';
+      }
+    }
+    e.target.value = '';
+  });
+
+  $('#addAccountBtn').onclick = async () => {
+    try {
+      const r = await openAddAccountModal();
+      if (r) { toast(r.message, 'success'); router(); }
+    } catch (err) {
+      toast(err.message, 'error');
+    }
+  };
+
+  $$('.acc-move').forEach((btn) => {
+    btn.onclick = async () => {
+      try {
+        const r = await openMoveModal(State.user, Number(btn.dataset.moveFrom));
+        if (r) { toast('Transfer successful', 'success'); router(); }
+      } catch (err) {
+        toast(err.message, 'error');
+      }
+    };
+  });
+}
+
+/* ---------------- Add account modal ---------------- */
+function openAddAccountModal() {
+  return new Promise((resolve) => {
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.innerHTML = `
+      <div class="modal">
+        <h3 class="modal-title">${Icons.plus} Open a New Account</h3>
+        <p class="modal-desc">Your new account starts at $0 and is ready for transfers and withdrawals.</p>
+        <div class="form-group">
+          <label class="label" for="accLabel">Account name <span class="text-muted">(optional)</span></label>
+          <input class="input" id="accLabel" maxlength="30" placeholder="e.g. Savings, Bills, Travel">
+        </div>
+        <div class="form-error" id="accError"></div>
+        <div style="display:flex; gap:10px; margin-top:16px;">
+          <button class="btn btn-ghost btn-block" id="accCancel">Cancel</button>
+          <button class="btn btn-navy btn-block" id="accCreate">${Icons.plus} Open Account</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+    $('#accCancel', overlay).onclick = () => overlay.remove();
+    const input = $('#accLabel', overlay);
+    setTimeout(() => input.focus(), 60);
+    $('#accCreate', overlay).onclick = async () => {
+      const btn = $('#accCreate', overlay);
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner"></span> Opening...';
+      try {
+        const r = await API.openAccount({ label: input.value.trim() });
+        overlay.remove();
+        resolve(r);
+      } catch (err) {
+        showFormError('accError', err.message);
+        btn.disabled = false;
+        btn.innerHTML = `${Icons.plus} Open Account`;
+      }
+    };
+  });
+}
+
+/* ---------------- Move-money modal (own accounts) ---------------- */
+function openMoveModal(me, fromId) {
+  return new Promise((resolve) => {
+    const accounts = (me && me.accounts) || [];
+    if (accounts.length < 2) { toast('You need at least two accounts to move money', 'error'); resolve(false); return; }
+
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.innerHTML = `
+      <div class="modal">
+        <h3 class="modal-title">${Icons.send} Move Money</h3>
+        <p class="modal-desc">Transfer between your own Chase Bank accounts.</p>
+        <div class="form-group">
+          <label class="label" for="mvFrom">From Account</label>
+          <select class="input" id="mvFrom">${accountOptions(accounts, fromId)}</select>
+        </div>
+        <div class="form-group">
+          <label class="label" for="mvTo">To Account</label>
+          <select class="input" id="mvTo">${accountOptions(accounts, null)}</select>
+        </div>
+        <div class="form-group">
+          <label class="label" for="mvAmount">Amount ($) <span class="text-muted" id="mvAvailable"></span></label>
+          <input class="input" type="number" id="mvAmount" min="1" inputmode="decimal" placeholder="0.00">
+        </div>
+        <div class="form-error" id="mvError"></div>
+        <div style="display:flex; gap:10px; margin-top:16px;">
+          <button class="btn btn-ghost btn-block" id="mvCancel">Cancel</button>
+          <button class="btn btn-navy btn-block" id="mvNext">${Icons.send} Continue to PIN</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+    $('#mvCancel', overlay).onclick = () => overlay.remove();
+
+    const fromSel = $('#mvFrom', overlay);
+    const toSel = $('#mvTo', overlay);
+    const syncAvail = () => {
+      const opt = fromSel.options[fromSel.selectedIndex];
+      $('#mvAvailable', overlay).textContent = '— Available: ' + (opt ? opt.text.split('—').pop() : '');
+    };
+    fromSel.addEventListener('change', syncAvail);
+    syncAvail();
+
+    $('#mvNext', overlay).onclick = async () => {
+      const from = Number(fromSel.value);
+      const to = Number(toSel.value);
+      const amount = $('#mvAmount', overlay).value;
+      hideFormError('mvError');
+      if (from === to) return showFormError('mvError', 'Choose two different accounts');
+      if (!(Number(amount) > 0)) return showFormError('mvError', 'Enter a valid amount');
+
+      const btn = $('#mvNext', overlay);
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner"></span> Loading...';
+      try {
+        const result = await openPinModal({
+          title: 'Confirm Move',
+          amount,
+          onSuccess: (pin) => API.moveMoney({ from_account_id: from, to_account_id: to, amount, pin })
+        });
+        if (result.success) {
+          overlay.remove();
+          resolve(result.data);
+          return;
+        }
+      } catch (err) {
+        showFormError('mvError', err.message);
+      }
+      btn.disabled = false;
+      btn.innerHTML = `${Icons.send} Continue to PIN`;
+    };
+  });
+}
+
+/* ---------------- Resize image for avatar upload ---------------- */
+function resizeImage(file, size = 256) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = size;
+        canvas.height = size;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillRect(0, 0, size, size);
+        const min = Math.min(img.width, img.height);
+        const sx = (img.width - min) / 2;
+        const sy = (img.height - min) / 2;
+        ctx.drawImage(img, sx, sy, min, min, 0, 0, size, size);
+        URL.revokeObjectURL(url);
+        resolve(canvas.toDataURL('image/jpeg', 0.85));
+      } catch (e) {
+        URL.revokeObjectURL(url);
+        reject(new Error('Could not process the image'));
+      }
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error('Could not read the image'));
+    };
+    img.src = url;
+  });
 }
 
 /* ---------------- Unread badge ---------------- */

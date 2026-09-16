@@ -61,6 +61,73 @@ CREATE TABLE IF NOT EXISTS messages (
   created_at TEXT NOT NULL,
   FOREIGN KEY (user_id) REFERENCES users(id)
 );
+
+CREATE TABLE IF NOT EXISTS accounts (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id        INTEGER NOT NULL,
+  account_number TEXT NOT NULL UNIQUE,
+  label          TEXT NOT NULL DEFAULT 'Main account',
+  balance        REAL NOT NULL DEFAULT 0,
+  is_default     INTEGER NOT NULL DEFAULT 0,
+  created_at     TEXT NOT NULL,
+  FOREIGN KEY (user_id) REFERENCES users(id)
+);
 `);
+
+function tableExists(name) {
+  return db.prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?`).get(name) !== undefined;
+}
+
+function columnExists(table, column) {
+  return db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === column);
+}
+
+// Migrations for databases created before the multi-account / avatar feature.
+if (!tableExists('accounts')) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS accounts (
+      id             INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id        INTEGER NOT NULL,
+      account_number TEXT NOT NULL UNIQUE,
+      label          TEXT NOT NULL DEFAULT 'Main account',
+      balance        REAL NOT NULL DEFAULT 0,
+      is_default     INTEGER NOT NULL DEFAULT 0,
+      created_at     TEXT NOT NULL,
+      FOREIGN KEY (user_id) REFERENCES users(id)
+    );
+  `);
+}
+
+const accountCount = db.prepare('SELECT COUNT(*) AS c FROM accounts').get().c;
+if (accountCount === 0) {
+  const users = db.prepare('SELECT id, account_number, balance, created_at FROM users').all();
+  const seed = db.prepare('INSERT INTO accounts (user_id, account_number, label, balance, is_default, created_at) VALUES (?, ?, ?, ?, 1, ?)');
+  db.exec('BEGIN');
+  try {
+    for (const u of users) seed.run(u.id, u.account_number, 'Main account', u.balance, u.created_at);
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+}
+
+if (!columnExists('transactions', 'account_id')) {
+  db.exec('ALTER TABLE transactions ADD COLUMN account_id INTEGER');
+  const rows = db.prepare('SELECT t.id AS tid, a.id AS aid FROM transactions t JOIN accounts a ON a.user_id = t.user_id AND a.is_default = 1').all();
+  const upd = db.prepare('UPDATE transactions SET account_id = ? WHERE id = ?');
+  db.exec('BEGIN');
+  try {
+    for (const r of rows) upd.run(r.aid, r.tid);
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+}
+
+if (!columnExists('users', 'avatar')) {
+  db.exec('ALTER TABLE users ADD COLUMN avatar TEXT');
+}
 
 module.exports = db;
