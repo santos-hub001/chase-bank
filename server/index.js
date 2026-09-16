@@ -386,6 +386,10 @@ app.get('/api/pay/recipient', (req, res) => {
   res.json(recipient);
 });
 
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
 app.use((req, res, next) => {
   if (req.path.startsWith('/api/')) return next();
   if (req.method !== 'GET') return next();
