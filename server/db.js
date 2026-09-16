@@ -1,11 +1,73 @@
-const { DatabaseSync } = require('node:sqlite');
 const path = require('node:path');
 
-const DB_PATH = path.join(__dirname, '..', 'data', 'chasebank.db');
-const db = new DatabaseSync(DB_PATH);
+const TURSO_URL = process.env.TURSO_DATABASE_URL;
+const isTurso = Boolean(TURSO_URL);
 
-db.exec('PRAGMA journal_mode = WAL;');
-db.exec('PRAGMA foreign_keys = ON;');
+let db;
+if (isTurso) {
+  // Embedded replica: a local libSQL file that keeps SQLite semantics locally
+  // while syncing committed frames to the Turso cloud database every second.
+  // Runtime data therefore survives restart, redeploys, and instance recycles
+  // (unlike a bare SQLite file on Render's ephemeral disk).
+  const Database = require('libsql');
+  const replicaPath = process.env.CHASE_BANK_DB || path.join(__dirname, '..', 'data', 'turso-replica.db');
+  db = new Database(replicaPath, {
+    syncUrl: TURSO_URL,
+    authToken: process.env.TURSO_AUTH_TOKEN,
+    syncPeriod: 1
+  });
+  try {
+    db.sync();
+  } catch (err) {
+    console.error('Initial Turso sync failed (continuing with local replica):', err.message);
+  }
+  db.exec('PRAGMA foreign_keys = ON;');
+
+  // The embedded replica multiplexes reads and writes across separate SQLite
+  // connections, so explicit BEGIN/COMMIT transactions are unreliable here: a
+  // SELECT inside a transaction, or foreign-key validation against a row
+  // inserted in the same transaction, can silently end the transaction and turn
+  // COMMIT into "cannot commit - no transaction is active". The stable mode for
+  // a replica is autocommit (every run() is its own committed frame, kept
+  // read-your-writes by syncPeriod). BEGIN/COMMIT/ROLLBACK are therefore no-ops
+  // and transaction() executes its callback statement-by-statement in autocommit,
+  // so the same server code works on local SQLite and on Turso.
+  const execOrig = db.exec.bind(db);
+  db.exec = (sql) => {
+    const head = String(sql).trim().split(/\s+/)[0].toUpperCase();
+    if (head === 'BEGIN' || head === 'COMMIT' || head === 'ROLLBACK') return undefined;
+    return execOrig(sql);
+  };
+  db.transaction = (fn) => {
+    const runAuto = (...args) => fn(...args);
+    runAuto.default = runAuto;
+    runAuto.deferred = runAuto;
+    runAuto.immediate = runAuto;
+    runAuto.exclusive = runAuto;
+    runAuto.database = db;
+    return runAuto;
+  };
+
+  // Flush pending local writes to Turso before the process shuts down
+  // (Render can terminate free instances at any time).
+  const onExit = () => {
+    try {
+      db.sync();
+    } catch (_) { /* ignore */ }
+  };
+  process.on('SIGTERM', onExit);
+  process.on('SIGINT', onExit);
+} else {
+  const { DatabaseSync } = require('node:sqlite');
+  const DB_PATH = process.env.CHASE_BANK_DB || path.join(__dirname, '..', 'data', 'chasebank.db');
+  db = new DatabaseSync(DB_PATH);
+  db.exec('PRAGMA journal_mode = WAL;');
+  db.exec('PRAGMA foreign_keys = ON;');
+}
+
+function columnExists(table, column) {
+  return db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === column);
+}
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS users (
@@ -74,60 +136,96 @@ CREATE TABLE IF NOT EXISTS accounts (
 );
 `);
 
-function tableExists(name) {
-  return db.prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?`).get(name) !== undefined;
-}
-
-function columnExists(table, column) {
-  return db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === column);
-}
-
-// Migrations for databases created before the multi-account / avatar feature.
-if (!tableExists('accounts')) {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS accounts (
-      id             INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id        INTEGER NOT NULL,
-      account_number TEXT NOT NULL UNIQUE,
-      label          TEXT NOT NULL DEFAULT 'Main account',
-      balance        REAL NOT NULL DEFAULT 0,
-      is_default     INTEGER NOT NULL DEFAULT 0,
-      created_at     TEXT NOT NULL,
-      FOREIGN KEY (user_id) REFERENCES users(id)
-    );
-  `);
-}
-
+// Ensure every user has a default account (covers databases made before the multi-account feature).
 const accountCount = db.prepare('SELECT COUNT(*) AS c FROM accounts').get().c;
 if (accountCount === 0) {
   const users = db.prepare('SELECT id, account_number, balance, created_at FROM users').all();
   const seed = db.prepare('INSERT INTO accounts (user_id, account_number, label, balance, is_default, created_at) VALUES (?, ?, ?, ?, 1, ?)');
-  db.exec('BEGIN');
-  try {
+  db.transaction(() => {
     for (const u of users) seed.run(u.id, u.account_number, 'Main account', u.balance, u.created_at);
-    db.exec('COMMIT');
-  } catch (err) {
-    db.exec('ROLLBACK');
-    throw err;
-  }
+  })();
 }
 
+// Migrations for databases created before the multi-account / avatar feature.
 if (!columnExists('transactions', 'account_id')) {
   db.exec('ALTER TABLE transactions ADD COLUMN account_id INTEGER');
   const rows = db.prepare('SELECT t.id AS tid, a.id AS aid FROM transactions t JOIN accounts a ON a.user_id = t.user_id AND a.is_default = 1').all();
   const upd = db.prepare('UPDATE transactions SET account_id = ? WHERE id = ?');
-  db.exec('BEGIN');
-  try {
+  db.transaction(() => {
     for (const r of rows) upd.run(r.aid, r.tid);
-    db.exec('COMMIT');
-  } catch (err) {
-    db.exec('ROLLBACK');
-    throw err;
-  }
+  })();
 }
 
 if (!columnExists('users', 'avatar')) {
   db.exec('ALTER TABLE users ADD COLUMN avatar TEXT');
+}
+
+// Seed the demo users on empty databases (fresh local clones or a brand-new Turso DB).
+const userCount = db.prepare('SELECT COUNT(*) AS c FROM users').get().c;
+if (userCount === 0) {
+  const demo = [
+    {
+      full_name: 'TUNDE BALOGUN',
+      email: 'tunde@chasebank.test',
+      phone: '07011112222',
+      account_number: '07011112222',
+      password_hash: '$2b$10$oSNqEuprY2740ltxHetZ/OKFv6m9ftRaUc2srWpNehmY/Oq2GJOP2',
+      transfer_pin: '$2b$10$RVwjsdxODl17xar8i9CZwucljt3V55.N3r3MF3kcsFZ3kQcaWVON2',
+      balance: 52500,
+      created_at: '2026-09-16T02:47:05.297Z'
+    },
+    {
+      full_name: 'ADAEZE OBI',
+      email: 'adaeze@chasebank.test',
+      phone: '08123456789',
+      account_number: '08123456789',
+      password_hash: '$2b$10$9VEpmT3BfKYFJaobbQDLJOOoTmXRZ69.cj0YOuh.aT.ZxGI4KcmEa',
+      transfer_pin: '$2b$10$40lN9aMJtHDWSNiVWCpIhOYlKyaemWu6vw9YW.ADvM6qc3KrybfRW',
+      balance: 47500,
+      created_at: '2026-09-16T02:47:18.526Z'
+    }
+  ];
+  const txRows = [
+    { user_id: 1, account_no: '07011112222', type: 'credit', category: 'WELCOME_BONUS', amount: 50000, counterparty: 'CHASE BANK', description: 'Welcome bonus for opening an account', reference: 'CB26825329ECB1', balance_after: 50000, created_at: '2026-09-16T02:47:05.330Z' },
+    { user_id: 2, account_no: '08123456789', type: 'credit', category: 'WELCOME_BONUS', amount: 50000, counterparty: 'CHASE BANK', description: 'Welcome bonus for opening an account', reference: 'CB268385518E02', balance_after: 50000, created_at: '2026-09-16T02:47:18.551Z' },
+    { user_id: 2, account_no: '08123456789', type: 'debit', category: 'TRANSFER', amount: 2500, counterparty: 'SENT TO TUNDE BALOGUN (07011112222)', description: 'Lunch money', reference: 'CB26840910993C', balance_after: 47500, created_at: '2026-09-16T02:47:20.910Z' },
+    { user_id: 1, account_no: '07011112222', type: 'credit', category: 'TRANSFER', amount: 2500, counterparty: 'FROM ADAEZE OBI (08123456789)', description: 'Lunch money', reference: 'CB26840910993C', balance_after: 52500, created_at: '2026-09-16T02:47:20.910Z' }
+  ];
+  const notifRows = [
+    { user_id: 1, message: 'Welcome to Chase Bank! A $50,000 welcome bonus has been credited to your account.', type: 'welcome', created_at: '2026-09-16T02:47:05.355Z' },
+    { user_id: 2, message: 'Welcome to Chase Bank! A $50,000 welcome bonus has been credited to your account.', type: 'welcome', created_at: '2026-09-16T02:47:18.601Z' },
+    { user_id: 2, message: 'You sent $2,500 to TUNDE BALOGUN (07011112222).', type: 'debit', created_at: '2026-09-16T02:47:20.974Z' },
+    { user_id: 1, message: 'You received $2,500 from ADAEZE OBI (08123456789).', type: 'credit', created_at: '2026-09-16T02:47:20.974Z' }
+  ];
+  const insUser = db.prepare('INSERT INTO users (full_name, email, phone, account_number, password_hash, transfer_pin, balance, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+  const insAccount = db.prepare('INSERT INTO accounts (user_id, account_number, label, balance, is_default, created_at) VALUES (?, ?, ?, ?, 1, ?)');
+  const insTx = db.prepare('INSERT INTO transactions (user_id, type, category, amount, counterparty, description, reference, balance_after, account_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+  const insNotif = db.prepare('INSERT INTO notifications (user_id, message, type, created_at) VALUES (?, ?, ?, ?)');
+
+  db.transaction(() => {
+    for (const u of demo) {
+      const userResult = insUser.run(u.full_name, u.email, u.phone, u.account_number, u.password_hash, u.transfer_pin, u.balance, u.created_at);
+      const userId = Number(userResult.lastInsertRowid);
+      const accountResult = insAccount.run(userId, u.account_number, 'Main account', u.balance, u.created_at);
+      const accountId = Number(accountResult.lastInsertRowid);
+      for (const t of txRows) {
+        if (t.user_id !== userId) continue;
+        insTx.run(t.user_id, t.type, t.category, t.amount, t.counterparty, t.description, t.reference, t.balance_after, accountId, t.created_at);
+      }
+      for (const n of notifRows) {
+        if (n.user_id !== userId) continue;
+        insNotif.run(n.user_id, n.message, n.type, n.created_at);
+      }
+    }
+  })();
+
+  if (isTurso) {
+    try {
+      db.sync();
+    } catch (err) {
+      console.error('Seed sync to Turso failed (will retry in background):', err.message);
+    }
+  }
 }
 
 module.exports = db;

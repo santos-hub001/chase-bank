@@ -906,7 +906,7 @@ function renderFooterSmall() {
 }
 
 /* ---------------- PIN modal ---------------- */
-function openPinModal({ title = 'Confirm Transfer', amount, onSuccess, requireLocation = false }) {
+function openPinModal({ title = 'Confirm Transfer', amount, onSuccess }) {
   return new Promise((resolve) => {
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
@@ -915,21 +915,8 @@ function openPinModal({ title = 'Confirm Transfer', amount, onSuccess, requireLo
         <h3 class="modal-title" style="font-size:18px;">${title}</h3>
         ${amount ? `<div style="font-size:26px; font-weight:800; color:var(--navy); margin:10px 0 4px;">${fmtMoney(amount)}</div>` : ''}
         <p class="modal-desc" style="margin-bottom:18px;">Enter your 4-digit transfer PIN</p>
-        ${requireLocation ? `
-        <div class="loc-gate" id="locGate">
-          <div class="loc-line">
-            <span class="loc-icon">${Icons.location}</span>
-            <div>
-              <b>Device location required</b>
-              <p>This transfer session requires your device location to be ON. Location is read live and never stored.</p>
-            </div>
-          </div>
-          <button class="btn btn-outline btn-block" id="locCheck">${Icons.location} Verify Device Location</button>
-          <div class="form-error" id="locError"></div>
-        </div>
-        <div class="loc-verified" id="locVerified" hidden>${Icons.check} Location verified — <small id="locVerCoord"></small></div>` : ''}
         <div class="pin-inputs" id="pinInputs">
-          ${[0, 1, 2, 3].map((i) => `<input class="pin-box" type="password" inputmode="numeric" maxlength="1" autocomplete="off" aria-label="PIN digit ${i + 1}" ${requireLocation ? 'disabled' : ''}>`).join('')}
+          ${[0, 1, 2, 3].map((i) => `<input class="pin-box" type="password" inputmode="numeric" maxlength="1" autocomplete="off" aria-label="PIN digit ${i + 1}">`).join('')}
         </div>
         <div style="font-size:13px; color:var(--muted); margin-top:14px;">${Icons.shield} Protected by your transfer PIN</div>
         <div style="display:flex; gap:10px; margin-top:22px;">
@@ -945,59 +932,10 @@ function openPinModal({ title = 'Confirm Transfer', amount, onSuccess, requireLo
     $('#pinInputs', overlay).after(errline);
 
     let pin = '';
-    let locationOk = !requireLocation;
 
-    const setLocationOk = (ok) => { locationOk = ok; };
-
-    const updateConfirm = () => { $('#pinConfirm', overlay).disabled = pin.length < 4 || !locationOk; };
+    const updateConfirm = () => { $('#pinConfirm', overlay).disabled = pin.length < 4; };
 
     const focusNext = (i) => { if (i < 3) boxes[i + 1].focus(); };
-
-    const verifyLocation = () => new Promise((res) => {
-      if (!('geolocation' in navigator)) {
-        const err = $('#locError', overlay); if (err) { err.textContent = 'Location is unavailable in this browser. Use a secure context (HTTPS or localhost) and allow location access.'; err.classList.add('show'); }
-        res(false); return;
-      }
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          if (requireLocation) {
-            $('#locGate', overlay).hidden = true;
-            const vLine = $('#locVerified', overlay);
-            vLine.hidden = false;
-            $('#locVerCoord', overlay).textContent =
-              `${pos.coords.latitude.toFixed(4)}, ${pos.coords.longitude.toFixed(4)} (accuracy ~${Math.round(pos.coords.accuracy)}m)`;
-          }
-          boxes.forEach((b) => { b.disabled = false; });
-          setLocationOk(true);
-          updateConfirm();
-          setTimeout(() => { if (boxes[0]) boxes[0].focus(); }, 60);
-          res(true);
-        },
-        (err) => {
-          const el = $('#locError', overlay);
-          if (el) {
-            el.textContent = err && err.code === 1
-              ? 'Device location is OFF or permission was denied. Turn on location services and retry.'
-              : 'Could not read your location. Check that device location is ON and retry.';
-            el.classList.add('show');
-            setTimeout(() => el.classList.remove('show'), 6000);
-          }
-          res(false);
-        },
-        { enableHighAccuracy: true, timeout: 9000, maximumAge: 0 }
-      );
-    });
-
-    if (requireLocation) {
-      const locBtn = $('#locCheck', overlay);
-      locBtn.onclick = async () => {
-        locBtn.disabled = true;
-        locBtn.innerHTML = '<span class="spinner"></span> Checking location...';
-        await verifyLocation();
-        locBtn.disabled = false;
-        locBtn.innerHTML = `${Icons.location} Verify Device Location`;
-      };
-    }
 
     boxes.forEach((box, i) => {
       box.addEventListener('input', () => {
@@ -1731,7 +1669,6 @@ async function openingTransfer(phone, amount, desc, errorId) {
     const result = await openPinModal({
       title: 'Confirm Transfer',
       amount,
-      requireLocation: true,
       onSuccess: (pin) => API.transfer({ recipient: phone, amount, pin, description: desc || '', account_id: accountId })
     });
     if (!result.success) return;
@@ -1779,7 +1716,6 @@ function bindWithdraw() {
       const result = await openPinModal({
         title: 'Confirm Withdrawal',
         amount,
-        requireLocation: true,
         onSuccess: (pin) => API.withdraw({ amount, pin, account_id: accountId })
       });
       if (!result.success) return;

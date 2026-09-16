@@ -167,14 +167,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   check('PIN modal opened', true);
   check('4 PIN boxes', (await page.$$('.pin-box')).length === 4);
 
-  console.log('9b. Location gate blocks the transfer session until verified');
-  check('location gate shown', await page.$('#locGate') !== null);
-  check('PIN boxes disabled before location verify', (await page.$$eval('.pin-box', (els) => els.every((b) => b.disabled))) === true);
-  check('confirm disabled before location verify', await page.$eval('#pinConfirm', (el) => el.disabled) === true);
-  await page.click('#locCheck');
-  await wait('#locVerified');
-  check('location verified line shown', true);
-  check('PIN boxes enabled after location verify', (await page.$$eval('.pin-box', (els) => els.every((b) => !b.disabled))) === true);
+  console.log('9b. No location gate — PIN entry is available immediately');
+  check('no location gate shown', await page.$('#locGate') === null);
+  check('PIN boxes enabled immediately', (await page.$$eval('.pin-box', (els) => els.every((b) => !b.disabled))) === true);
+  check('confirm disabled until 4 digits', await page.$eval('#pinConfirm', (el) => el.disabled) === true);
 
   console.log('10. Wrong pin rejected');
   await page.type('.pin-box:nth-child(1)', '1');
