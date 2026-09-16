@@ -40,3 +40,6 @@ Thumbs.db
 Desktop.ini
 .vscode/
 .DS_Store
+
+# array: my interactive gh-login scratch leak (device-code only, not a credential, but shouldn't ship)
+ghlogin.out
