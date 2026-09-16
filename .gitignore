@@ -1,10 +1,13 @@
 # Dependencies
 node_modules/
 
-# Critical app data (SQLite database) — INCLUDED in this repo
-# (user data here is demo/build-seeded: chasebank.test emails, demo phones,
-#  bcrypt-hashed passwords/PINs only. Registered users re-created on first boot.)
-data/chasebank.db
+# =============================================================
+# SQLite database — INCLUDED in this repo (tracked, committed)
+#    pattern: ignore everything in data/  ->  re-include ONLY the DB
+#    (demo data is build-seeded: chasebank.test emails, demo phones,
+#     bcrypt-hashed passwords/PINs only. Registered users re-create on boot.)
+data/*
+!data/chasebank.db
 
 # SQLite transient files — WAL/SHM/journal are run-time only, never committed
 data/*.db-wal
@@ -20,6 +23,7 @@ data/*.txt
 # Logs & scratch
 *.log
 *.done
+ghlogin.out
 server/_*
 server/__*
 server/debug-*.js
