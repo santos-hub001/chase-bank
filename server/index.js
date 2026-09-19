@@ -232,8 +232,12 @@ app.post('/api/auth/register', (req, res) => {
   if (pin !== String(confirm_transfer_pin || '').trim()) return res.status(400).json({ error: 'Transfer pins do not match' });
   if (pin === String(password)) return res.status(400).json({ error: 'Transfer pin must differ from your password' });
 
-  const existing = db.prepare('SELECT id FROM users WHERE email = ? OR phone = ? OR username = ?').get(mail, phoneClean, handle);
-  if (existing) return res.status(409).json({ error: 'An account already exists with this email, phone number or username' });
+  const existing = db.prepare('SELECT id, email, phone, username FROM users WHERE email = ? OR phone = ? OR username = ?').get(mail, phoneClean, handle);
+  if (existing) {
+    if (existing.email === mail) return res.status(409).json({ error: 'An account already exists with this email address. Try signing in instead.', field: 'email' });
+    if (existing.phone === phoneClean) return res.status(409).json({ error: 'An account already exists with this phone number. Try signing in instead.', field: 'phone' });
+    return res.status(409).json({ error: 'That username is already taken. Choose a different username to continue.', field: 'username' });
+  }
 
   const otpRec = otpStore.get(phoneClean);
   if (!otpRec || !otpRec.verified || Date.now() - (otpRec.verifiedAt || 0) > OTP_TTL_MS) {

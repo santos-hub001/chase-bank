@@ -75,6 +75,7 @@ function check(name, cond, extra = '') {
   check('bad pin rejected', r.status === 400, String(r.data.error));
   r = await req('/api/auth/register', { method: 'POST', body: { first_name: 'Twins', last_name: 'User', username: 'santos', email: 'new@chasebank.test', phone: '08077777777', password: 'secret123', confirm_password: 'secret123', transfer_pin: '4321', confirm_transfer_pin: '4321' } });
   check('duplicate username rejected', r.status === 409, String(r.data.error));
+  check('tells user to change username', r.status === 409 && /choose a different username to continue/i.test(r.data.error), r.data.error);
   r = await req('/api/auth/register', { method: 'POST', body: { first_name: 'Dup', last_name: 'Mail', username: 'dup_mail', email: 'santos@chasebank.test', phone: '08011111111', password: 'secret123', confirm_password: 'secret123', transfer_pin: '4321', confirm_transfer_pin: '4321' } });
   check('duplicate email rejected', r.status === 409);
 

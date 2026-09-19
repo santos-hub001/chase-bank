@@ -8,7 +8,12 @@ async function api(path, options = {}, method) {
   const res = await fetch(path, opts);
   let data = null;
   try { data = await res.json(); } catch (e) { data = null; }
-  if (!res.ok) throw new Error(data?.error || 'Something went wrong');
+  if (!res.ok) {
+    const err = new Error(data?.error || 'Something went wrong');
+    err.field = data?.field;
+    err.status = res.status;
+    throw err;
+  }
   return data;
 }
 

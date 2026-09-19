@@ -1634,7 +1634,13 @@ function bindSignup() {
       toast('Account created! $50,000 welcome bonus credited.', 'success');
       navigate('dashboard');
     } catch (err) {
-      showFormError('signupError', err.message);
+      if (err.field === 'username') {
+        const hint = $('#suUsernameHint');
+        if (hint) { hint.textContent = err.message; hint.className = 'pass-hint weak'; }
+        username.focus();
+      } else {
+        showFormError('signupError', err.message);
+      }
       btn.disabled = false;
       btn.innerHTML = `${Icons.user} Create Account`;
     }
