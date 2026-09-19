@@ -67,14 +67,18 @@ sign-ups create their own accounts and receive the welcome bonus.
 
 ### Demo/test credentials
 
-| Role  | Name | Phone | Password | Transfer PIN |
-|-------|------|--------|----------|--------------|
-| Admin | ADAEZE OBI | `08123456789` | `chase123` | `2468` |
-| Peer  | TUNDE BALOGUN | `07011112222` | `pass4567` | `1111` |
+| Role | Name | Username | Phone | Account number | Password | Transfer PIN |
+|------|------|----------|--------|----------------|----------|--------------|
+| Admin | ADAEZE OBI | `adaeze` | `08123456789` | `5200000002` | `chase123` | `2468` |
+| Peer  | TUNDE BALOGUN | `tunde` | `07011112222` | `5200000001` | `pass4567` | `1111` |
+
+Sign in with either your **username** or **phone number**. Every account is
+issued a unique 10-digit account number starting with `52` (e.g.
+`5200000001`); use account numbers for transfers and recipient lookups.
 
 The two demo accounts are pre-seeded in the committed database (`data/chasebank.db`), so the app boots fully populated. `pass4567` and `07011112222` are also the values used in the automated tests.
 
-The signup flow also generates a `demo_otp` welcome bonus on the page.
+The signup flow also generates a `demo_otp` code on the page for verification.
 
 ---
 
@@ -82,7 +86,9 @@ The signup flow also generates a `demo_otp` welcome bonus on the page.
 
 ```bash
 # backend API contract suite
-node server/test-backend.js      # 36 checks
+node server/test-backend.js      # 41 backend API checks
+node server/test-frontend.js     # 50 jsdom checks
+node server/test-e2e.js          # 72 headless-Chrome checks
 
 # full browser E2E (starts its own clean DB; needs the server on :3000)
 node server/test-e2e.js
