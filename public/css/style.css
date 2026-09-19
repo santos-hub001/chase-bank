@@ -658,6 +658,12 @@ select.input {
 .balance-acc { position: relative; z-index: 1; margin-top: 14px; display: flex; gap: 26px; flex-wrap: wrap; font-size: 13px; }
 .balance-acc span { display: flex; align-items: center; gap: 6px; opacity: 0.85; }
 .balance-acc svg { width: 15px; height: 15px; }
+.copy-inline { display: inline-flex; align-items: center; gap: 6px; vertical-align: middle; }
+.copy-btn { display: inline-flex; align-items: center; justify-content: center; padding: 0; margin: 0; border: none; background: none; cursor: pointer; color: inherit; opacity: 0.7; transition: opacity 0.15s ease, transform 0.1s ease; }
+.copy-btn svg { width: 16px; height: 16px; }
+.copy-btn:hover { opacity: 1; }
+.copy-btn:active { transform: scale(0.88); }
+.copy-btn:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; border-radius: 4px; }
 
 .chip { position: absolute; right: 26px; bottom: 26px; z-index: 1; opacity: 0.9; width: 52px; height: 38px; }
 

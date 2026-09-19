@@ -116,6 +116,33 @@ function toast(message, type = 'info') {
   }, 3200);
 }
 
+function copyText(value, btn) {
+  const ok = () => {
+    if (btn) {
+      const orig = btn.innerHTML;
+      btn.innerHTML = Icons.check;
+      btn.style.color = 'var(--green)';
+      setTimeout(() => { btn.innerHTML = orig; btn.style.color = ''; }, 1300);
+    }
+    toast('Account number copied', 'success');
+  };
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(String(value)).then(ok, () => fallbackCopy(value, ok));
+  } else fallbackCopy(value, ok);
+}
+
+function fallbackCopy(value, ok) {
+  const ta = document.createElement('textarea');
+  ta.value = String(value);
+  ta.setAttribute('readonly', '');
+  ta.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0;';
+  document.body.appendChild(ta);
+  ta.select();
+  try { document.execCommand('copy'); ok(); }
+  catch (e) { toast('Could not copy automatically — please copy manually', 'error'); }
+  ta.remove();
+}
+
 /* ---------------- Nav / shell ---------------- */
 function renderTopbar() {
   const isAuthed = !!State.user;
@@ -588,7 +615,9 @@ async function viewDashboard() {
       <div class="amount ${visible}" id="balanceAmount">${fmtMoney(me.balance)}</div>
       <div class="balance-acc">
         <span>${Icons.user} ${me.full_name}</span>
-        <span>${Icons.card} ACCT: ${me.account_number}</span>
+        <span>${Icons.card} ACCT: ${me.account_number}
+          <button type="button" class="copy-btn" onclick="copyText('${me.account_number}', this)" title="Copy account number" aria-label="Copy account number">${Icons.copy}</button>
+        </span>
         <span>${Icons.shield} PIN Protected</span>
       </div>
       <img class="chip" src="Favicon/chase%20favicon.png" alt="Chase Bank">
@@ -843,7 +872,9 @@ async function viewMe() {
       </div>
       <div>
         <h2>${me.full_name}</h2>
-        <p>${firstName}, your unique account number is <b>${me.account_number}</b> — share it freely for transfers.</p>
+        <p>${firstName}, your unique account number is
+          <b class="copy-inline">${me.account_number}<button type="button" class="copy-btn" onclick="copyText('${me.account_number}', this)" title="Copy account number" aria-label="Copy account number">${Icons.copy}</button></b>
+          — share it freely for transfers.</p>
       </div>
       <div class="member-since"><div>MEMBER SINCE</div><b>${memberDate}</b></div>
     </div>
@@ -858,7 +889,9 @@ async function viewMe() {
       </div>
       <div class="card profile-field">
         <div class="pf-icon">${Icons.phone}</div>
-        <div><div class="pf-label">Account Number</div><div class="pf-value">${me.account_number}</div></div>
+        <div><div class="pf-label">Account Number</div>
+          <div class="pf-value"><span class="copy-inline">${me.account_number}<button type="button" class="copy-btn" onclick="copyText('${me.account_number}', this)" title="Copy account number" aria-label="Copy account number">${Icons.copy}</button></span></div>
+        </div>
       </div>
       <div class="card profile-field">
         <div class="pf-icon">${Icons.mail}</div>

@@ -31,7 +31,7 @@ const reg = await post('/api/auth/register', {
   // Grant geolocation so the transfer location gate resolves (simulates "location ON")
   try {
     const bcdp = await browser.target().createCDPSession();
-    await bcdp.send('Browser.grantPermissions', { origin: BASE, permissions: ['geolocation'] });
+    await bcdp.send('Browser.grantPermissions', { origin: BASE, permissions: ['geolocation', 'clipboardReadWrite'] });
   } catch (e) { console.log('  [warn] grantPermissions:', e.message); }
   const page = await browser.newPage();
   try {
@@ -140,8 +140,9 @@ check('empty submit shows error', /first name/i.test(await txt('#signupError')))
     console.log('  [debug] body snippet:', (await page.$eval('body', el => el.innerText.slice(0, 200))).replace(/\n/g, ' | '));
     throw e;
   }
-  check('landed on dashboard', page.url().includes('dashboard'));
+check('landed on dashboard', page.url().includes('dashboard'));
   check('welcome bonus balance $50,000.00', (await txt('.amount')).includes('50,000.00'));
+  check('copy button on balance card', (await page.$$('.balance-card .copy-btn')).length >= 1);
 
   console.log('6. Transaction history + welcome bonus');
   const txText = await txt('.tx-list');
@@ -263,7 +264,14 @@ check('name shown', (await txt('.profile-hero h2')).includes('EMEKA'));
   check('account number starts with 52', /52\d{8}/.test(await txt('body')));
   check('logout button', await page.$('#logoutBtn') !== null);
 
-console.log('16. Logout & login');
+console.log('15b. Copy account number');
+  await page.click('.profile-field .copy-btn');
+  await sleep(500);
+  const clip = await page.evaluate(async () => { try { return await navigator.clipboard.readText(); } catch (e) { return null; } });
+  check('clipboard holds account number', /^52\d{8}$/.test(clip || ''), String(clip));
+  check('copy success toast shown', /copied/i.test(await bodyText()));
+
+  console.log('16. Logout & login');
   await page.click('#logoutBtn');
   await wait('.modal-overlay');
   await page.waitForFunction(() => [...document.querySelectorAll('.modal')].some(m => /Are you sure you want to log out/i.test(m.textContent || '')), { timeout: 12000 });

@@ -223,6 +223,19 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   check('username shown', doc.body.innerHTML.includes('@femi'));
   check('logout button present', !!doc.querySelector('#logoutBtn'));
 
+  console.log('18b. Copy account number');
+  const copyBtns = doc.querySelectorAll('.copy-btn');
+  check('copy button rendered', copyBtns.length >= 1, 'n=' + copyBtns.length);
+  let copied = null;
+  doc.defaultView.document.execCommand = (cmd) => {
+    if (cmd === 'copy') { const ta = doc.querySelector('textarea'); copied = ta ? ta.value : null; return true; }
+    return false;
+  };
+  copyBtns[0].click();
+  await sleep(150);
+  check('click copies account number to clipboard', /^52\d{8}$/.test(copied || ''), String(copied));
+  check('copy success toast shown', doc.body.innerHTML.includes('copied'));
+
   console.log('19. Login flow');
   doc.querySelector('#logoutBtn').click();
   await sleep(500);
