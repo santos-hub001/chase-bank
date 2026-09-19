@@ -2,7 +2,9 @@ const express = require('express');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const bcrypt = require('bcryptjs');
+const QRCode = require('qrcode');
 const db = require('./db');
+const { generateSecret, verifyTotp, otpauthUrl, newBackupCodes, hashBackupCode } = require('./totp');
 
 const app = express();
 
@@ -34,6 +36,35 @@ const OTP_SEND_COOLDOWN_MS = 30 * 1000;
 const OTP_MAX_SENDS = 5;
 const OTP_MAX_ATTEMPTS = 5;
 const otpStore = new Map();
+
+const PENDING2FA_TTL_MS = 5 * 60 * 1000;
+const PENDING2FA_MAX_ATTEMPTS = 5;
+const pending2FA = new Map();
+
+function newPending2FA(userId) {
+  const token = crypto.randomBytes(24).toString('hex');
+  pending2FA.set(token, { userId, attempts: 0, expires: Date.now() + PENDING2FA_TTL_MS });
+  return token;
+}
+
+function consumeBackupCode(user, code) {
+  const normalized = String(code || '').toUpperCase().replace(/[^A-Z0-9-]/g, '');
+  if (!normalized || !user.twofa_secret || !user.twofa_codes) return false;
+  let codes = [];
+  try { codes = JSON.parse(user.twofa_codes) || []; } catch (e) { /* corrupted list */ }
+  const hash = hashBackupCode(user.twofa_secret, normalized);
+  const idx = codes.indexOf(hash);
+  if (idx === -1) return false;
+  codes.splice(idx, 1);
+  db.prepare('UPDATE users SET twofa_codes = ? WHERE id = ?').run(JSON.stringify(codes), user.id);
+  return true;
+}
+
+function twofaPasses(user, code) {
+  if (!user.twofa_secret) return false;
+  if (verifyTotp(user.twofa_secret, code)) return true;
+  return consumeBackupCode(user, code);
+}
 
 function newOtp() {
   return String(crypto.randomInt(0, 1000000)).padStart(6, '0');
@@ -203,6 +234,8 @@ app.get('/api/auth/me', (req, res) => {
     account_number: user.account_number,
     balance: userTotalBalance(user.id),
     avatar: user.avatar || null,
+    twofa_enabled: !!user.twofa_enabled,
+    twofa_setup: !!(user.twofa_secret && !user.twofa_enabled),
     created_at: user.created_at,
     accounts: userAccounts(user.id)
   });
@@ -298,10 +331,89 @@ app.post('/api/auth/login', (req, res) => {
     return res.status(401).json({ error: 'Incorrect password' });
   }
 
+  if (user.twofa_enabled) {
+    const token = newPending2FA(user.id);
+    return res.json({ message: 'Two-factor authentication required', twofa_required: true, token });
+  }
+
   const token = createSession(user.id);
   setAuthCookie(res, token);
 
   res.json({ message: 'Login successful', account_number: user.account_number });
+});
+
+app.post('/api/auth/2fa/verify', (req, res) => {
+  const { token, code } = req.body || {};
+  if (!token) return res.status(400).json({ error: 'Sign-in token missing' });
+  const pending = pending2FA.get(token);
+  if (!pending || pending.expires <= Date.now()) {
+    pending2FA.delete(token);
+    return res.status(410).json({ error: 'This sign-in request has expired. Sign in again.' });
+  }
+  if (pending.attempts >= PENDING2FA_MAX_ATTEMPTS) {
+    pending2FA.delete(token);
+    return res.status(429).json({ error: 'Too many attempts. Sign in again.' });
+  }
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(pending.userId);
+  if (!user) return res.status(401).json({ error: 'Account not found' });
+  if (!twofaPasses(user, code)) {
+    pending.attempts += 1;
+    return res.status(401).json({ error: 'Incorrect authentication code' });
+  }
+  pending2FA.delete(token);
+  const session = createSession(user.id);
+  setAuthCookie(res, session);
+  res.json({ message: 'Login successful', account_number: user.account_number });
+});
+
+app.post('/api/auth/2fa/setup', async (req, res) => {
+  const user = getSessionUser(req);
+  if (!user) return res.status(401).json({ error: 'Not authenticated' });
+  if (user.twofa_enabled) return res.status(400).json({ error: 'Two-factor authentication is already enabled' });
+  const secret = generateSecret();
+  db.prepare('UPDATE users SET twofa_secret = ? WHERE id = ?').run(secret, user.id);
+  const label = String(user.username || user.email || 'user');
+  const otpauth = otpauthUrl(secret, label);
+  let qr = null;
+  try { qr = await QRCode.toDataURL(otpauth, { width: 260, margin: 1, errorCorrectionLevel: 'M' }); } catch (e) { /* QR generation failed — secret + link still usable */ }
+  res.json({ secret, otpauth, qr });
+});
+
+app.post('/api/auth/2fa/enable', (req, res) => {
+  const user = getSessionUser(req);
+  if (!user) return res.status(401).json({ error: 'Not authenticated' });
+  if (user.twofa_enabled) return res.status(400).json({ error: 'Two-factor authentication is already enabled' });
+  if (!user.twofa_secret) return res.status(400).json({ error: 'Start the 2FA setup first' });
+  const { code } = req.body || {};
+  if (!verifyTotp(user.twofa_secret, code)) {
+    return res.status(400).json({ error: 'Incorrect code. Enter the 6-digit code from your authenticator app.' });
+  }
+  const codes = newBackupCodes();
+  const hashes = codes.map((c) => hashBackupCode(user.twofa_secret, c));
+  db.prepare('UPDATE users SET twofa_enabled = 1, twofa_codes = ? WHERE id = ?').run(JSON.stringify(hashes), user.id);
+  res.status(201).json({ message: 'Two-factor authentication enabled', backup_codes: codes });
+});
+
+app.post('/api/auth/2fa/backup-codes', (req, res) => {
+  const user = getSessionUser(req);
+  if (!user) return res.status(401).json({ error: 'Not authenticated' });
+  if (!user.twofa_secret || !user.twofa_enabled) return res.status(400).json({ error: 'Enable two-factor authentication first' });
+  const { code } = req.body || {};
+  if (!twofaPasses(user, code)) return res.status(401).json({ error: 'Incorrect authentication code' });
+  const codes = newBackupCodes();
+  const hashes = codes.map((c) => hashBackupCode(user.twofa_secret, c));
+  db.prepare('UPDATE users SET twofa_codes = ? WHERE id = ?').run(JSON.stringify(hashes), user.id);
+  res.json({ backup_codes: codes });
+});
+
+app.post('/api/auth/2fa/disable', (req, res) => {
+  const user = getSessionUser(req);
+  if (!user) return res.status(401).json({ error: 'Not authenticated' });
+  if (!user.twofa_enabled) return res.status(400).json({ error: 'Two-factor authentication is not enabled' });
+  const { code } = req.body || {};
+  if (!twofaPasses(user, code)) return res.status(401).json({ error: 'Incorrect authentication code' });
+  db.prepare('UPDATE users SET twofa_secret = NULL, twofa_enabled = 0, twofa_codes = NULL WHERE id = ?').run(user.id);
+  res.json({ message: 'Two-factor authentication disabled' });
 });
 
 app.post('/api/auth/logout', (req, res) => {
@@ -323,6 +435,8 @@ app.get('/api/account', (req, res) => {
     account_number: user.account_number,
     balance: userTotalBalance(user.id),
     avatar: user.avatar || null,
+    twofa_enabled: !!user.twofa_enabled,
+    twofa_setup: !!(user.twofa_secret && !user.twofa_enabled),
     created_at: user.created_at,
     accounts: userAccounts(user.id)
   });

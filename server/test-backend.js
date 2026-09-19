@@ -1,4 +1,5 @@
 const BASE = 'http://localhost:3000';
+const { totpAt, currentCounter } = require('./totp');
 let okCount = 0, failCount = 0;
 
 const santos = { cookie: null };
@@ -146,6 +147,80 @@ function check(name, cond, extra = '') {
   check('login by phone', r.status === 200);
   r = await req('/api/auth/login', { method: 'POST', body: { identifier: 'santos', password: 'secret123' } }, santos);
   check('login by username', r.status === 200);
+
+  console.log('17. Two-factor authentication (authenticator TOTP)');
+  const nowCode = (secret) => totpAt(secret, currentCounter());
+  const kemi = { cookie: null };
+  r = await req('/api/auth/send-otp', { method: 'POST', body: { phone: '08070000000' } });
+  check('2FA: send OTP for KEMI', r.status === 200, JSON.stringify(r.data));
+  await req('/api/auth/verify-otp', { method: 'POST', body: { phone: '08070000000', otp: r.data.demo_otp } });
+  r = await req('/api/auth/register', { method: 'POST', body: { first_name: 'KEMI', last_name: 'ADEYEMI', username: 'kemi', email: 'kemi@chasebank.test', phone: '08070000000', password: 'secret123', confirm_password: 'secret123', transfer_pin: '1122', confirm_transfer_pin: '1122' } });
+  check('2FA: register KEMI', r.status === 201);
+  r = await req('/api/auth/login', { method: 'POST', body: { identifier: 'kemi', password: 'secret123' } }, kemi);
+  check('2FA: login direct before enabling (no 2FA)', r.status === 200 && !r.data.twofa_required);
+
+  r = await req('/api/auth/2fa/setup', { method: 'POST' }, kemi);
+  check('2FA: setup returns QR + 32-char base32 secret', r.status === 200 && r.data.qr && r.data.qr.startsWith('data:image/png;base64,') && /^[A-Z2-7]{32}$/.test(r.data.secret || ''));
+  let kemiSecret = r.data.secret;
+  r = await req('/api/auth/2fa/setup', { method: 'POST' }, kemi);
+  check('2FA: second setup rotates the secret', r.status === 200 && r.data.secret !== kemiSecret);
+  // use the secret from the LAST setup response (the active one stored in the DB)
+  kemiSecret = r.data.secret;
+  r = await req('/api/auth/me', {}, kemi);
+  check('2FA: me shows setup true / enabled false', r.data.twofa_enabled === false && r.data.twofa_setup === true, JSON.stringify({ e: r.data.twofa_enabled, s: r.data.twofa_setup }));
+
+  r = await req('/api/auth/2fa/enable', { method: 'POST', body: { code: '000000' } }, kemi);
+  check('2FA: enable wrong code rejected', r.status === 400);
+  r = await req('/api/auth/2fa/enable', { method: 'POST', body: { code: nowCode(kemiSecret) } }, kemi);
+  check('2FA: enable success + 10 backup codes', r.status === 201 && Array.isArray(r.data.backup_codes) && r.data.backup_codes.length === 10, 'status=' + r.status);
+  const kemiBackup = r.data.backup_codes;
+  check('2FA: backup code format XYZZ-XXXX-XXXX', kemiBackup.every((c) => /^[A-Z2-9]{4}-[A-Z2-9]{4}-[A-Z2-9]{4}$/.test(c)));
+  r = await req('/api/auth/me', {}, kemi);
+  check('2FA: me shows enabled true / setup false', r.data.twofa_enabled === true && r.data.twofa_setup === false);
+
+  await req('/api/auth/logout', { method: 'POST' }, kemi);
+  kemi.cookie = null;
+  let tk = await req('/api/auth/login', { method: 'POST', body: { identifier: 'kemi', password: 'secret123' } }, kemi);
+  check('2FA: login now two-step (token, no cookie)', tk.status === 200 && tk.data.twofa_required === true && !!tk.data.token && !kemi.cookie, JSON.stringify(tk.data));
+  r = await req('/api/auth/me', {}, kemi);
+  check('2FA: me still 401 before code', r.status === 401);
+  r = await req('/api/auth/2fa/verify', { method: 'POST', body: { token: tk.data.token, code: '000000' } }, kemi);
+  check('2FA: verify wrong code rejected', r.status === 401);
+  r = await req('/api/auth/2fa/verify', { method: 'POST', body: { token: tk.data.token, code: nowCode(kemiSecret) } }, kemi);
+  check('2FA: verify completes login', r.status === 200 && !!r.data.account_number, JSON.stringify(r.data));
+  r = await req('/api/auth/me', {}, kemi);
+  check('2FA: me 200 after verify', r.status === 200 && r.data.username === 'kemi');
+
+  await req('/api/auth/logout', { method: 'POST' }, kemi);
+  kemi.cookie = null;
+  tk = await req('/api/auth/login', { method: 'POST', body: { identifier: 'kemi', password: 'secret123' } }, kemi);
+  r = await req('/api/auth/2fa/verify', { method: 'POST', body: { token: tk.data.token, code: kemiBackup[0] } }, kemi);
+  check('2FA: backup code signs in', r.status === 200);
+  r = await req('/api/auth/me', {}, kemi);
+  check('2FA: session valid via backup code', r.status === 200);
+  await req('/api/auth/logout', { method: 'POST' }, kemi);
+  kemi.cookie = null;
+  tk = await req('/api/auth/login', { method: 'POST', body: { identifier: 'kemi', password: 'secret123' } }, kemi);
+  r = await req('/api/auth/2fa/verify', { method: 'POST', body: { token: tk.data.token, code: kemiBackup[0] } }, kemi);
+  check('2FA: REUSED backup code rejected', r.status === 401);
+
+  // sign back in via authenticator so management endpoints see a session
+  tk = await req('/api/auth/login', { method: 'POST', body: { identifier: 'kemi', password: 'secret123' } }, kemi);
+  r = await req('/api/auth/2fa/verify', { method: 'POST', body: { token: tk.data.token, code: nowCode(kemiSecret) } }, kemi);
+  check('2FA: re-signed in for management', r.status === 200);
+
+  r = await req('/api/auth/2fa/backup-codes', { method: 'POST', body: { code: nowCode(kemiSecret) } }, kemi);
+  check('2FA: regenerate backup codes', r.status === 200 && Array.isArray(r.data.backup_codes) && r.data.backup_codes.length === 10);
+  r = await req('/api/auth/2fa/disable', { method: 'POST', body: { code: '000000' } }, kemi);
+  check('2FA: disable wrong code rejected', r.status === 401);
+  r = await req('/api/auth/2fa/disable', { method: 'POST', body: { code: nowCode(kemiSecret) } }, kemi);
+  check('2FA: disable success', r.status === 200);
+  r = await req('/api/auth/me', {}, kemi);
+  check('2FA: me shows disabled after disable', r.data.twofa_enabled === false && r.data.twofa_setup === false);
+  await req('/api/auth/logout', { method: 'POST' }, kemi);
+  kemi.cookie = null;
+  let tk2 = await req('/api/auth/login', { method: 'POST', body: { identifier: 'kemi', password: 'secret123' } }, kemi);
+  check('2FA: login direct again after disable', tk2.status === 200 && !tk2.data.twofa_required);
 
   console.log('');
   console.log(`RESULT: ${okCount} passed, ${failCount} failed`);

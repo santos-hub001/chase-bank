@@ -1,5 +1,6 @@
 const { JSDOM, VirtualConsole } = require('jsdom');
 const BASE = 'http://localhost:3000';
+const { totpAt, currentCounter } = require('./totp');
 
 let ok = 0, fail = 0;
 function check(name, cond, extra = '') {
@@ -250,6 +251,76 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   doc.querySelector('#loginBtn').click();
   await sleep(1200);
   check('login navigates to dashboard', dom.window.location.hash.includes('dashboard'));
+
+  console.log('19b. Two-factor authentication (UI)');
+  const waitFor = async (selector, timeout = 6000) => {
+    const start = Date.now();
+    while (Date.now() - start < timeout) {
+      if (doc.querySelector(selector)) return true;
+      await sleep(100);
+    }
+    return !!doc.querySelector(selector);
+  };
+  const waitForCond = async (fn, timeout = 6000) => {
+    const start = Date.now();
+    while (Date.now() - start < timeout) {
+      let v;
+      try { v = fn(); } catch { v = false; }
+      if (v) return true;
+      await sleep(100);
+    }
+    try { return !!fn(); } catch { return false; }
+  };
+  dom.window.location.hash = '#/me';
+  check('2FA: turn-on button on profile', await waitFor('#setup2faBtn'));
+  doc.querySelector('#setup2faBtn').click();
+  check('2FA: setup modal with QR + secret', (await waitFor('#twofaSecret')) && !!doc.querySelector('#twofaQr'));
+  const femiSecret = doc.querySelector('#twofaSecret').textContent;
+  const k = () => totpAt(femiSecret, currentCounter());
+  check('2FA: secret is 32-char base32', /^[A-Z2-7]{32}$/.test(femiSecret));
+  check('2FA: QR is a PNG data URL', doc.querySelector('#twofaQr').src.startsWith('data:image/png;base64,'));
+  doc.querySelector('#setup2faCode').value = '000000';
+  doc.querySelector('#setup2faEnable').click();
+  await sleep(500);
+  check('2FA: wrong code shows error', doc.querySelector('#setup2faError').classList.contains('show'));
+  doc.querySelector('#setup2faCode').value = k();
+  doc.querySelector('#setup2faEnable').click();
+  check('2FA: backup-codes modal appears', await waitFor('#bcDone') && doc.querySelectorAll('.backup-codes code').length === 10);
+  check('2FA: backup code format valid', [...doc.querySelectorAll('.backup-codes code')].every((c) => /^[A-Z2-9]{4}-[A-Z2-9]{4}-[A-Z2-9]{4}$/.test(c.textContent)));
+  doc.querySelector('#bcDone').click();
+  check('2FA: profile now shows enabled controls', await waitFor('#viewBackupBtn') && !!doc.querySelector('#disable2faBtn'));
+
+  console.log('19c. Backup-code regeneration');
+  doc.querySelector('#viewBackupBtn').click();
+  check('2FA: regenerate asks for current code', await waitFor('#ccCode'));
+  doc.querySelector('#ccCode').value = k();
+  doc.querySelector('#ccConfirm').click();
+  check('2FA: fresh batch of 10 codes shown', (await waitFor('#bcDone')) && doc.querySelectorAll('.backup-codes code').length === 10);
+  doc.querySelector('#bcDone').click();
+  await sleep(400);
+
+  console.log('19d. Dashboard banner + two-step login');
+  dom.window.location.hash = '#/dashboard';
+  await sleep(700);
+  check('2FA: advice banner gone once enabled', !doc.querySelector('.banner-2fa'));
+  check('balance card renders after re-render', !!doc.querySelector('.balance-card'));
+  dom.window.location.hash = '#/me';
+  await waitFor('#logoutBtn');
+  doc.querySelector('#logoutBtn').click();
+  await sleep(500);
+  doc.querySelector('#logoutConfirm')?.click();
+  await sleep(800);
+  dom.window.location.hash = '#/login';
+  check('2FA: login form shown again', await waitFor('#loginForm'));
+  doc.querySelector('#loginIdentifier').value = 'femi';
+  doc.querySelector('#loginPassword').value = 'chase123';
+  doc.querySelector('#loginBtn').click();
+  check('2FA: authenticator step replaces login form', (await waitForCond(() => doc.querySelector('#twofaStep') && doc.querySelector('#twofaStep').hidden === false)) && doc.querySelector('#loginForm').hidden === true);
+  const twofaCode = doc.querySelector('#twofaCode');
+  twofaCode.value = k();
+  doc.querySelector('#twofaForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
+  await sleep(1500);
+  check('2FA: code completes sign-in', dom.window.location.hash.includes('dashboard'));
 
   console.log('20. Withdraw flow');
   dom.window.location.hash = '#/withdraw';

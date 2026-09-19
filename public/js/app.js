@@ -116,7 +116,7 @@ function toast(message, type = 'info') {
   }, 3200);
 }
 
-function copyText(value, btn) {
+function copyText(value, btn, label) {
   const ok = () => {
     if (btn) {
       const orig = btn.innerHTML;
@@ -124,7 +124,7 @@ function copyText(value, btn) {
       btn.style.color = 'var(--green)';
       setTimeout(() => { btn.innerHTML = orig; btn.style.color = ''; }, 1300);
     }
-    toast('Account number copied', 'success');
+    toast(label || 'Account number copied', 'success');
   };
   if (navigator.clipboard && window.isSecureContext) {
     navigator.clipboard.writeText(String(value)).then(ok, () => fallbackCopy(value, ok));
@@ -453,6 +453,22 @@ function viewLogin() {
       </div>
       <button class="btn btn-primary btn-block btn-lg" type="submit" id="loginBtn">${Icons.lock} Login</button>
     </form>
+    <div id="twofaStep" hidden>
+      <div class="twofa-step-head">${Icons.shield}</div>
+      <h3 style="text-align:center; margin:6px 0 2px;">Two-Factor Authentication</h3>
+      <p class="sub" style="text-align:center; margin-bottom:16px;">Enter the 6-digit code from your authenticator app to finish signing in.</p>
+      <div class="form-error" id="twofaError"></div>
+      <form id="twofaForm">
+        <div class="form-group">
+          <label class="label" for="twofaCode">Authentication code</label>
+          <div class="input-wrap">
+            <input class="input input-pad" type="text" id="twofaCode" inputmode="numeric" pattern="[0-9]*" maxlength="6" placeholder="e.g. 123456" autocomplete="one-time-code">
+          </div>
+        </div>
+        <button class="btn btn-primary btn-block btn-lg" type="submit" id="twofaBtn">${Icons.shield} Verify &amp; Sign In</button>
+      </form>
+      <button type="button" class="btn btn-ghost btn-block" id="twofaBack" style="margin-top:10px;">Back to sign in</button>
+    </div>
     <div class="auth-switch">New to Chase Bank? <a href="#/signup">Create an account</a></div>
     `
   );
@@ -593,6 +609,15 @@ async function viewDashboard() {
 
   const firstName = (me.full_name || '').split(' ')[0];
 
+  const adviceBanner = (!me.twofa_enabled && localStorage.getItem('chase2faAdvice') !== 'hidden')
+    ? `<div class="banner-2fa">
+        <div class="banner-2fa-icon">${Icons.shield}</div>
+        <div class="banner-2fa-text"><b>Protect your account</b><span>Turn on two-factor authentication for an extra layer of security when you sign in.</span></div>
+        <a class="btn btn-sm btn-light" href="#/me">Turn on 2FA</a>
+        <button type="button" class="banner-2fa-x" id="hide2faAdvice" aria-label="Dismiss reminder" title="Dismiss">${Icons.x}</button>
+      </div>`
+    : '';
+
   return `
   ${renderTopbar()}
   <div class="app-shell">
@@ -603,6 +628,8 @@ async function viewDashboard() {
       </div>
       <a href="#/me"><div class="avatar" title="Profile">${avatarContent(me)}</div></a>
     </div>
+
+    ${adviceBanner}
 
     <div class="balance-card">
       <div class="balance-top">
@@ -917,6 +944,19 @@ async function viewMe() {
         <div class="profile-field" style="border:none; padding:14px 0;">
           <div class="pf-icon" style="background:var(--green-soft); color:var(--green);">${Icons.lock}</div>
           <div><div class="pf-label">Transfer PIN</div><div class="pf-value">4-digit PIN set</div></div>
+        </div>
+        <div class="profile-field" style="border:none; padding:14px 0;">
+          <div class="pf-icon" style="background:${me.twofa_enabled ? 'var(--green-soft); color:var(--green)' : 'var(--gold-soft); color:var(--gold)'};">${Icons.shield}</div>
+          <div>
+            <div class="pf-label">Two-Factor Authentication</div>
+            <div class="pf-value">${me.twofa_enabled ? 'On — authenticator app protecting your sign-ins' : 'Off — an extra lock for your account'}</div>
+          </div>
+        </div>
+        <div style="display:flex; gap:10px; flex-wrap:wrap;">
+          ${me.twofa_enabled
+            ? `<button type="button" class="btn btn-soft btn-sm" id="viewBackupBtn">${Icons.key} Backup codes</button>
+               <button type="button" class="btn btn-outline btn-sm" id="disable2faBtn">${Icons.shield} Turn off 2FA</button>`
+            : `<button type="button" class="btn btn-primary btn-sm" id="setup2faBtn">${Icons.shield} Turn on 2FA</button>`}
         </div>
       </div>
     </div>
@@ -1406,7 +1446,7 @@ function openReceipt(t) {
 
 /* ---------------- Event bindings ---------------- */
 function bindRouteEvents(route) {
-  if (route === 'login') bindLogin();
+  if (route === 'login') { bindLogin(); bindTwofaStep(); }
   if (route === 'signup') bindSignup();
   if (route === 'dashboard') bindDashboard();
   if (route === 'send') bindSend();
@@ -1475,7 +1515,16 @@ function bindLogin() {
     btn.disabled = true;
     btn.innerHTML = '<span class="spinner"></span> Logging in...';
     try {
-      await API.login({ identifier, password });
+      const r = await API.login({ identifier, password });
+      if (r.twofa_required) {
+        State.twofaToken = r.token;
+        $('#loginForm').hidden = true;
+        $('#twofaStep').hidden = false;
+        btn.disabled = false;
+        btn.innerHTML = `${Icons.lock} Login`;
+        $('#twofaCode').focus();
+        return;
+      }
       toast('Welcome back to Chase Bank', 'success');
       navigate('dashboard');
     } catch (err) {
@@ -1483,6 +1532,39 @@ function bindLogin() {
       btn.disabled = false;
       btn.innerHTML = `${Icons.lock} Login`;
     }
+  };
+}
+
+function bindTwofaStep() {
+  const f = $('#twofaForm');
+  if (!f) return;
+  f.onsubmit = async (e) => {
+    e.preventDefault();
+    hideFormError('twofaError');
+    const code = $('#twofaCode').value.trim();
+    if (!/^\d{6}$/.test(code)) { showFormError('twofaError', 'Enter the 6-digit code'); return; }
+    const btn = $('#twofaBtn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span> Verifying...';
+    try {
+      await API.twofaVerify({ token: State.twofaToken, code });
+      State.twofaToken = null;
+      toast('Welcome back to Chase Bank', 'success');
+      navigate('dashboard');
+    } catch (err) {
+      showFormError('twofaError', err.message);
+      $('#twofaCode').value = '';
+      btn.disabled = false;
+      btn.innerHTML = `${Icons.shield} Verify & Sign In`;
+      $('#twofaCode').focus();
+    }
+  };
+  $('#twofaBack').onclick = () => {
+    State.twofaToken = null;
+    $('#twofaStep').hidden = true;
+    $('#loginForm').hidden = false;
+    hideFormError('twofaError');
+    $('#loginPassword').focus();
   };
 }
 
@@ -1688,6 +1770,14 @@ function bindDashboard() {
     $('#toggleBalance').innerHTML = State.balanceHidden ? Icons.eye : Icons.eyeOff;
     $('.balance-eyes span').textContent = State.balanceHidden ? 'Hidden' : 'Showing';
   };
+  const hideAdvice = $('#hide2faAdvice');
+  if (hideAdvice) {
+    hideAdvice.onclick = () => {
+      localStorage.setItem('chase2faAdvice', 'hidden');
+      const banner = hideAdvice.closest('.banner-2fa');
+      if (banner) banner.remove();
+    };
+  }
 }
 
 async function startQuickTransfer() {
@@ -1901,6 +1991,15 @@ function bindMe() {
     }
   };
 
+  const setup2faBtn = $('#setup2faBtn');
+  if (setup2faBtn) setup2faBtn.onclick = open2faSetupModal;
+
+  const viewBackupBtn = $('#viewBackupBtn');
+  if (viewBackupBtn) viewBackupBtn.onclick = () => regenerateBackupCodes();
+
+  const disable2faBtn = $('#disable2faBtn');
+  if (disable2faBtn) disable2faBtn.onclick = () => open2faDisableModal();
+
   $$('.acc-move').forEach((btn) => {
     btn.onclick = async () => {
       try {
@@ -1952,6 +2051,145 @@ function openAddAccountModal() {
       }
     };
   });
+}
+
+/* ---------------- Two-factor authentication (2FA) ---------------- */
+function confirmCurrentCode(title, desc) {
+  return new Promise((resolve) => {
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.innerHTML = `
+      <div class="modal">
+        <h3 class="modal-title">${Icons.shield} ${title}</h3>
+        <p class="modal-desc">${desc}</p>
+        <div class="form-group">
+          <label class="label" for="ccCode">Current authentication code</label>
+          <div class="input-wrap">
+            <input class="input input-pad" id="ccCode" inputmode="numeric" pattern="[0-9]*" maxlength="6" placeholder="6-digit code" autocomplete="one-time-code">
+          </div>
+        </div>
+        <div class="form-error" id="ccError"></div>
+        <div style="display:flex; gap:10px; margin-top:16px;">
+          <button class="btn btn-ghost btn-block" id="ccCancel">Cancel</button>
+          <button class="btn btn-navy btn-block" id="ccConfirm">Confirm</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    const close = (val) => () => { overlay.remove(); resolve(val); };
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(null)(); });
+    const input = $('#ccCode', overlay);
+    setTimeout(() => input.focus(), 60);
+    $('#ccCancel', overlay).onclick = close(null);
+    $('#ccConfirm', overlay).onclick = () => {
+      const code = input.value.trim();
+      if (!/^\d{6}$/.test(code)) { showFormError('ccError', 'Enter the 6-digit code'); return; }
+      close(code)();
+    };
+  });
+}
+
+function openBackupCodesModal(codes) {
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal" style="max-width:430px;">
+      <h3 class="modal-title">${Icons.key} Save Your Backup Codes</h3>
+      <p class="modal-desc">Each code works only once. Store them somewhere safe — they are your only way in if you lose your authenticator app.</p>
+      <div class="backup-codes">${(codes || []).map((c) => `<code>${c}</code>`).join('')}</div>
+      <div style="display:flex; gap:10px; margin-top:16px;">
+        <button class="btn btn-outline btn-block" id="bcCopy">${Icons.copy} Copy all</button>
+        <button class="btn btn-navy btn-block" id="bcDone">${Icons.check} I saved these</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+  $('#bcDone', overlay).onclick = () => overlay.remove();
+  $('#bcCopy', overlay).onclick = () => copyText(codes.join('\n'), $('#bcCopy', overlay), 'Backup codes copied');
+}
+
+async function open2faSetupModal() {
+  let r;
+  try {
+    r = await API.twofaSetup();
+  } catch (err) {
+    toast(err.message || 'Could not start 2FA setup', 'error');
+    return;
+  }
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal" style="max-width:430px;">
+      <h3 class="modal-title">${Icons.shield} Turn on Two-Factor Authentication</h3>
+      <ol class="twofa-steps">
+        <li>Scan the QR code with your authenticator app (Google Authenticator, Microsoft Authenticator, or similar).</li>
+        <li>Enter the 6-digit code your app shows, then tap Enable.</li>
+        <li>Save the 10 backup codes we generate next — they help if you ever lose your phone.</li>
+      </ol>
+      <div class="qr-wrap"><img id="twofaQr" src="${r.qr}" alt="QR code for authenticator app"></div>
+      <div class="twofa-secret-row">
+        <span id="twofaSecret">${r.secret}</span>
+        <button type="button" class="copy-btn" onclick="copyText('${r.secret}', this, 'Secret key copied')" title="Copy secret key" aria-label="Copy secret key">${Icons.copy}</button>
+      </div>
+      <div class="form-group" style="margin-top:14px;">
+        <label class="label" for="setup2faCode">6-digit code from your app</label>
+        <div class="input-wrap">
+          <input class="input input-pad" id="setup2faCode" inputmode="numeric" pattern="[0-9]*" maxlength="6" placeholder="e.g. 123456" autocomplete="one-time-code">
+        </div>
+      </div>
+      <div class="form-error" id="setup2faError"></div>
+      <div style="display:flex; gap:10px; margin-top:16px;">
+        <button class="btn btn-ghost btn-block" id="setup2faCancel">Cancel</button>
+        <button class="btn btn-primary btn-block" id="setup2faEnable">${Icons.shield} Enable 2FA</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+  $('#setup2faCancel', overlay).onclick = () => overlay.remove();
+  const input = $('#setup2faCode', overlay);
+  setTimeout(() => input.focus(), 60);
+  $('#setup2faEnable', overlay).onclick = async () => {
+    const code = input.value.trim();
+    if (!/^\d{6}$/.test(code)) { showFormError('setup2faError', 'Enter the 6-digit code'); return; }
+    const btn = $('#setup2faEnable', overlay);
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span> Enabling...';
+    try {
+      const res = await API.twofaEnable({ code });
+      overlay.remove();
+      toast(res.message || 'Two-factor authentication enabled', 'success');
+      openBackupCodesModal(res.backup_codes);
+      router();
+    } catch (err) {
+      showFormError('setup2faError', err.message);
+      input.value = '';
+      btn.disabled = false;
+      btn.innerHTML = `${Icons.shield} Enable 2FA`;
+      input.focus();
+    }
+  };
+}
+
+async function open2faDisableModal() {
+  const code = await confirmCurrentCode('Turn off 2FA', 'Enter your current authenticator code to confirm.');
+  if (!code) return;
+  try {
+    const res = await API.twofaDisable({ code });
+    toast(res.message || 'Two-factor authentication turned off', 'success');
+    router();
+  } catch (err) {
+    toast(err.message || 'Could not turn off 2FA', 'error');
+  }
+}
+
+async function regenerateBackupCodes() {
+  const code = await confirmCurrentCode('Backup codes', 'Enter your current authenticator code to generate a fresh set of backup codes.');
+  if (!code) return;
+  try {
+    const res = await API.twofaBackupCodes({ code });
+    openBackupCodesModal(res.backup_codes);
+  } catch (err) {
+    toast(err.message || 'Could not generate backup codes', 'error');
+  }
 }
 
 /* ---------------- Move-money modal (own accounts) ---------------- */

@@ -1,6 +1,7 @@
 // CHASE BANK ??? End-to-end browser test (headless Chrome)
 // Usage: 1) server must be running 2) DB should be fresh -> "node server/test-e2e.js"
 const puppeteer = require('puppeteer-core');
+const { totpAt, currentCounter } = require('./totp');
 
 const BASE = 'http://localhost:3000';
 const CHROME = 'C:/Program Files/Google/Chrome/Application/chrome.exe';
@@ -240,9 +241,9 @@ await page.click('#wdBtn');
   const notifs = await page.$$('.notif-item');
   check('at least 3 notifications', notifs.length >= 3);
   check('unread markers present', (await page.$$('.notif-item.unread')).length >= 1);
-  if (await page.$('#readAllBtn')) {
+if (await page.$('#readAllBtn')) {
     await page.click('#readAllBtn');
-    await sleep(400);
+    await page.waitForFunction(() => document.querySelectorAll('.notif-item.unread').length === 0, { timeout: 8000, polling: 100 }).catch(() => {});
     check('mark all read works', (await page.$$('.notif-item.unread')).length === 0);
   }
 
@@ -377,9 +378,63 @@ await setVal('#loginIdentifier', '08033334444');
     const s = pdfBytes.toString('latin1');
     check('PDF header + trailer valid', s.startsWith('%PDF') && s.includes('%%EOF') && s.includes('Chase Bank'));
   }
-  await page.click('#rcClose');
+await page.click('#rcClose');
   await waitGone('.modal-receipt');
   check('receipt modal closes', true);
+
+  console.log('19. Two-factor authentication (authenticator)');
+  await page.goto(BASE + '/#/me', { waitUntil: 'networkidle2' });
+  await wait('.profile-hero');
+  await wait('#setup2faBtn');
+  check('2FA: turn-on button on profile', true);
+  await page.click('#setup2faBtn');
+  await wait('#twofaQr');
+  check('2FA: setup modal opens with QR', await page.$('#twofaQr') !== null);
+  const secretUgo = (await txt('#twofaSecret')).trim();
+  check('2FA: base32 secret displayed', /^[A-Z2-7]{32}$/.test(secretUgo));
+  check('2FA: QR is a PNG data URL', (await page.$eval('#twofaQr', (el) => el.src)).startsWith('data:image/png;base64,'));
+  await setVal('#setup2faCode', '000000');
+  await page.click('#setup2faEnable');
+  await wait('#setup2faError.show');
+  check('2FA: wrong code rejected in UI', /Incorrect code/i.test(await txt('#setup2faError')));
+  const codeUgo = () => totpAt(secretUgo, currentCounter());
+  await setVal('#setup2faCode', codeUgo());
+  await page.click('#setup2faEnable');
+  await wait('#bcDone', { timeout: 15000 });
+  const codesShown = await page.$$eval('.backup-codes code', (els) => els.map((e) => e.textContent.trim()));
+  check('2FA: 10 backup codes shown', codesShown.length === 10);
+  check('2FA: backup code format valid', codesShown.every((c) => /^[A-Z2-9]{4}-[A-Z2-9]{4}-[A-Z2-9]{4}$/.test(c)));
+  await page.click('#bcDone');
+  await waitGone('.modal-overlay');
+  await wait('#viewBackupBtn');
+  check('2FA: profile reflects enabled state', await page.$('#disable2faBtn') !== null);
+
+  console.log('20. Dashboard banner absent + two-step login');
+  await page.goto(BASE + '/#/dashboard', { waitUntil: 'networkidle2' });
+  await wait('.balance-card');
+  check('2FA: advice banner hidden once enabled', await page.$('.banner-2fa') === null);
+  await page.click('#logoutIcon');
+  await wait('.modal-overlay');
+  await page.click('#logoutConfirm');
+  await page.waitForFunction(() => location.hash === '' || location.hash === '#/', { timeout: 8000 });
+  await page.goto(BASE + '/#/login', { waitUntil: 'networkidle2' });
+  await wait('#loginForm');
+  await setVal('#loginIdentifier', 'ugo');
+  await setVal('#loginPassword', 'chase123');
+  await page.click('#loginBtn');
+  await wait('#twofaCode');
+  check('2FA: two-step login hides password form', (await page.$eval('#loginForm', (el) => el.hidden)) === true);
+  await page.click('#twofaBack');
+  await waitGone('#twofaStep');
+  check('2FA: back link returns to password login', true);
+  await setVal('#loginIdentifier', 'ugo');
+  await setVal('#loginPassword', 'chase123');
+  await page.click('#loginBtn');
+  await wait('#twofaStep');
+  await setVal('#twofaCode', codeUgo());
+  await page.click('#twofaBtn');
+  await wait('.balance-card', { timeout: 20000 });
+  check('2FA: login with authenticator code succeeds', page.url().includes('dashboard'));
 
   console.log('');
   console.log('Page errors captured:', errors.length ? errors : 'none');

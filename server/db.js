@@ -103,6 +103,9 @@ CREATE TABLE IF NOT EXISTS users (
   password_hash TEXT NOT NULL,
   transfer_pin  TEXT NOT NULL,
   balance       REAL NOT NULL DEFAULT 0,
+  twofa_secret  TEXT,
+  twofa_enabled INTEGER NOT NULL DEFAULT 0,
+  twofa_codes   TEXT,
   created_at    TEXT NOT NULL
 );
 
@@ -182,6 +185,17 @@ if (!columnExists('transactions', 'account_id')) {
 
 if (!columnExists('users', 'avatar')) {
   db.exec('ALTER TABLE users ADD COLUMN avatar TEXT');
+}
+
+// Migrations for two-factor authentication (authenticator app TOTP).
+if (!columnExists('users', 'twofa_secret')) {
+  db.exec('ALTER TABLE users ADD COLUMN twofa_secret TEXT');
+}
+if (!columnExists('users', 'twofa_enabled')) {
+  db.exec('ALTER TABLE users ADD COLUMN twofa_enabled INTEGER NOT NULL DEFAULT 0');
+}
+if (!columnExists('users', 'twofa_codes')) {
+  db.exec('ALTER TABLE users ADD COLUMN twofa_codes TEXT');
 }
 
 // Migrations for the account-identity feature: a unique username chosen at signup,

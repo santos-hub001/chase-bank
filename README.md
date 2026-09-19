@@ -5,7 +5,8 @@ retail bank: landing page, sign-up with phone (OTP) verification, deposit &
 withdrawal with a PIN + device-location gate, P2P money transfer with an
 animated paper-plane confirmation and generated receipts (PNG/PDF), live
 transaction history, notifications, 24/7 customer care, profile pictures,
-multiple accounts, and a profile/logout flow.
+multiple accounts, optional **two-factor authentication** (authenticator-app
+TOTP with one-time backup codes and two-step sign-in), and a profile/logout flow.
 
 > ⚠️ **Not affiliated with, endorsed by, or connected to JPMorgan Chase & Co.
 > in any way.** This is an independent educational/demo project built from
@@ -23,7 +24,7 @@ multiple accounts, and a profile/logout flow.
 | Styles   | CSS variables, glassmorphism, fully responsive |
 | E2E      | `puppeteer-core` + headless Chrome          |
 
-Zero production dependencies beyond the runtime + `puppeteer-core` for tests.
+Production dependencies: `qrcode` (authenticator QR codes) + `puppeteer-core` for tests.
 
 ---
 
@@ -49,6 +50,11 @@ Zero production dependencies beyond the runtime + `puppeteer-core` for tests.
 - **Multiple accounts**: open additional accounts (start at $0), view all
   accounts and balances in the Me section, and move money between your own
   accounts (PIN-protected)
+- **Two-factor authentication** (optional): enable from the Me → Security
+  panel, scan the QR (or type the base32 secret) into any authenticator app,
+  recover with 10 one-time backup codes (regenerable), and sign in with a
+  6-digit code on a dedicated 2FA step; disabled accounts keep the single-step
+  password login
 - Send Money / Withdraw: choose which account to send from or withdraw against
 - Logout with confirmation (from dashboard or the topbar icon)
 
@@ -86,13 +92,16 @@ The signup flow also generates a `demo_otp` code on the page for verification.
 
 ```bash
 # backend API contract suite
-node server/test-backend.js      # 41 backend API checks
-node server/test-frontend.js     # 50 jsdom checks
-node server/test-e2e.js          # 72 headless-Chrome checks
+node server/test-backend.js      # 66 backend API checks
+node server/test-frontend.js     # 68 jsdom checks
+node server/test-e2e.js          # 87 headless-Chrome checks
 
 # full browser E2E (starts its own clean DB; needs the server on :3000)
 node server/test-e2e.js
 ```
+
+Tip: `cd` into the repo root and run `node server/index.js` first so the tests
+have a live server on `:3000`, then run each suite against it.
 
 ---
 
