@@ -165,6 +165,9 @@ input, select, textarea { font-family: inherit; }
 
 /* ---------- Forms ---------- */
 .form-group { margin-bottom: 18px; }
+.form-row { display: flex; gap: 14px; }
+.form-row .form-group { flex: 1; min-width: 0; }
+@media (max-width: 480px) { .form-row { flex-direction: column; gap: 0; } }
 
 .label {
   display: block;

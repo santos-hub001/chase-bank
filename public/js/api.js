@@ -30,5 +30,5 @@ const API = {
   notifications: () => api('/api/notifications'),
   readAllNotifications: () => api('/api/notifications/readall', { method: 'PUT' }),
   customerCare: (body) => api('/api/customer-care', { method: 'POST', body }),
-  recipient: (phone) => api('/api/pay/recipient?phone=' + encodeURIComponent(phone))
+  recipient: (account) => api('/api/pay/recipient?account=' + encodeURIComponent(account))
 };

@@ -154,10 +154,10 @@ function sourceAccount(userId, accountId) {
 
 function newAccountNumber() {
   for (let i = 0; i < 20; i++) {
-    const n = String(crypto.randomInt(1000000000, 10000000000));
-    if (!db.prepare('SELECT 1 FROM accounts WHERE account_number = ?').get(n)) return n;
+    const n = '52' + String(crypto.randomInt(0, 100000000)).padStart(8, '0');
+    if (!db.prepare('SELECT 1 FROM accounts WHERE account_number = ? UNION ALL SELECT 1 FROM users WHERE account_number = ?').get(n, n)) return n;
   }
-  return '2' + String(Date.now()).slice(-9);
+  return '52' + String(Date.now()).slice(-8);
 }
 
 function insertTransaction({ userId, type, category, amount, counterparty, description, reference, balanceAfter, accountId }) {
@@ -195,6 +195,9 @@ app.get('/api/auth/me', (req, res) => {
   res.json({
     id: user.id,
     full_name: user.full_name,
+    first_name: user.first_name,
+    last_name: user.last_name,
+    username: user.username,
     email: user.email,
     phone: user.phone,
     account_number: user.account_number,
@@ -206,15 +209,21 @@ app.get('/api/auth/me', (req, res) => {
 });
 
 app.post('/api/auth/register', (req, res) => {
-  const { full_name, email, phone, password, confirm_password, transfer_pin, confirm_transfer_pin } = req.body || {};
+  const { first_name, last_name, username, email, phone, password, confirm_password, transfer_pin, confirm_transfer_pin } = req.body || {};
 
-  const name = String(full_name || '').trim();
+  const first = String(first_name || '').trim();
+  const last = String(last_name || '').trim();
+  const name = `${first} ${last}`.replace(/\s+/g, ' ').trim().toUpperCase();
+  const handle = String(username || '').trim().toLowerCase();
   const mail = String(email || '').trim().toLowerCase();
   const phoneClean = cleanPhone(phone);
   const pin = String(transfer_pin || '').trim();
 
-  if (!name) return res.status(400).json({ error: 'Full name is required' });
-  if (name.length < 3) return res.status(400).json({ error: 'Name must be at least 3 characters' });
+  if (!first || !last) return res.status(400).json({ error: 'Enter both your first name and last name' });
+  if (!/^[A-Za-z]{2,30}$/.test(first) || !/^[A-Za-z]{2,30}$/.test(last)) {
+    return res.status(400).json({ error: 'First and last name must contain only letters (2-30 characters)' });
+  }
+  if (!/^[a-zA-Z0-9_]{3,20}$/.test(handle)) return res.status(400).json({ error: 'Username must be 3-20 characters using letters, numbers or underscores' });
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(mail)) return res.status(400).json({ error: 'A valid email is required' });
   if (!/^\d{10,12}$/.test(phoneClean)) return res.status(400).json({ error: 'Phone number must be 10-12 digits' });
   if (String(password || '').length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
@@ -223,8 +232,8 @@ app.post('/api/auth/register', (req, res) => {
   if (pin !== String(confirm_transfer_pin || '').trim()) return res.status(400).json({ error: 'Transfer pins do not match' });
   if (pin === String(password)) return res.status(400).json({ error: 'Transfer pin must differ from your password' });
 
-  const existing = db.prepare('SELECT id FROM users WHERE email = ? OR phone = ?').get(mail, phoneClean);
-  if (existing) return res.status(409).json({ error: 'An account already exists with this email or phone number' });
+  const existing = db.prepare('SELECT id FROM users WHERE email = ? OR phone = ? OR username = ?').get(mail, phoneClean, handle);
+  if (existing) return res.status(409).json({ error: 'An account already exists with this email, phone number or username' });
 
   const otpRec = otpStore.get(phoneClean);
   if (!otpRec || !otpRec.verified || Date.now() - (otpRec.verifiedAt || 0) > OTP_TTL_MS) {
@@ -233,18 +242,19 @@ app.post('/api/auth/register', (req, res) => {
 
   const passwordHash = bcrypt.hashSync(password, 10);
   const pinHash = bcrypt.hashSync(pin, 10);
+  const accountNumber = newAccountNumber();
 
   const info = db.prepare(`
-    INSERT INTO users (full_name, email, phone, account_number, password_hash, transfer_pin, balance, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, 50000, ?)
-  `).run(name, mail, phoneClean, phoneClean, passwordHash, pinHash, now());
+    INSERT INTO users (full_name, first_name, last_name, username, email, phone, account_number, password_hash, transfer_pin, balance, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 50000, ?)
+  `).run(name, first, last, handle, mail, phoneClean, accountNumber, passwordHash, pinHash, now());
 
   const userId = Number(info.lastInsertRowid);
 
   const accInfo = db.prepare(`
     INSERT INTO accounts (user_id, account_number, label, balance, is_default, created_at)
     VALUES (?, ?, 'Main account', 50000, 1, ?)
-  `).run(userId, phoneClean, now());
+  `).run(userId, accountNumber, now());
   const defaultAccountId = Number(accInfo.lastInsertRowid);
 
   insertTransaction({
@@ -265,18 +275,20 @@ app.post('/api/auth/register', (req, res) => {
   setAuthCookie(res, token);
   otpStore.delete(phoneClean);
 
-  res.status(201).json({ message: 'Account created successfully', account_number: phoneClean });
+  res.status(201).json({ message: 'Account created successfully', account_number: accountNumber });
 });
 
 app.post('/api/auth/login', (req, res) => {
-  const { phone, password } = req.body || {};
-  const phoneClean = cleanPhone(phone);
+  const { identifier, password } = req.body || {};
+  const id = String(identifier || '').trim();
 
-  if (!/^\d{10,12}$/.test(phoneClean)) return res.status(400).json({ error: 'Enter a valid phone number' });
+  if (!id) return res.status(400).json({ error: 'Enter your username or phone number' });
   if (!password) return res.status(400).json({ error: 'Password is required' });
 
-  const user = db.prepare('SELECT * FROM users WHERE phone = ?').get(phoneClean);
-  if (!user) return res.status(401).json({ error: 'No account found with this phone number' });
+  const user = /^\d{10,12}$/.test(id)
+    ? db.prepare('SELECT * FROM users WHERE phone = ?').get(id)
+    : db.prepare('SELECT * FROM users WHERE username = ?').get(id.toLowerCase());
+  if (!user) return res.status(401).json({ error: 'No account found with this username or phone number' });
 
   if (!bcrypt.compareSync(password, user.password_hash)) {
     return res.status(401).json({ error: 'Incorrect password' });
@@ -299,6 +311,9 @@ app.get('/api/account', (req, res) => {
   if (!user) return res.status(401).json({ error: 'Not authenticated' });
   res.json({
     full_name: user.full_name,
+    first_name: user.first_name,
+    last_name: user.last_name,
+    username: user.username,
     email: user.email,
     phone: user.phone,
     account_number: user.account_number,
@@ -321,10 +336,10 @@ app.post('/api/transfer', (req, res) => {
   if (!user) return res.status(401).json({ error: 'Not authenticated' });
 
   const { recipient, amount, pin, description, account_id } = req.body || {};
-  const recipientPhone = cleanPhone(recipient);
+  const accNum = String(recipient || '').trim().replace(/\s+/g, '');
   const amt = sanitizeAmount(amount);
 
-  if (!/^\d{10,12}$/.test(recipientPhone)) return res.status(400).json({ error: 'Enter a valid recipient phone number' });
+  if (!/^52\d{8}$/.test(accNum)) return res.status(400).json({ error: 'Enter a valid recipient account number (starts with 52)' });
   if (amt === null) return res.status(400).json({ error: 'Enter a valid amount' });
   if (!/^\d{4}$/.test(String(pin || ''))) return res.status(400).json({ error: 'Enter your 4-digit transfer pin' });
   if (!bcrypt.compareSync(String(pin), user.transfer_pin)) return res.status(401).json({ error: 'Incorrect transfer pin' });
@@ -333,11 +348,13 @@ app.post('/api/transfer', (req, res) => {
   if (!from) return res.status(400).json({ error: 'Select a valid source account' });
   if (amt > from.balance) return res.status(400).json({ error: 'Insufficient balance for this transfer' });
 
+  const to = db.prepare('SELECT * FROM accounts WHERE account_number = ?').get(accNum);
+  if (!to) return res.status(404).json({ error: 'No Chase Bank account found with this account number' });
+
   const desc = String(description || '').trim() || 'Bank transfer';
 
-  if (recipientPhone === user.phone) {
-    const to = defaultAccount(user.id);
-    if (!to || from.id === to.id) return res.status(400).json({ error: 'Transfer to your own account is already in that account' });
+  if (to.user_id === user.id) {
+    if (to.id === from.id) return res.status(400).json({ error: 'Transfer to your own account is already in that account' });
 
     db.exec('BEGIN');
     try {
@@ -362,11 +379,8 @@ app.post('/api/transfer', (req, res) => {
     }
   }
 
-  const recipientUser = db.prepare('SELECT * FROM users WHERE phone = ?').get(recipientPhone);
-  if (!recipientUser) return res.status(404).json({ error: 'No Chase Bank account found with this phone number' });
-
-  const to = defaultAccount(recipientUser.id);
-  if (!to) return res.status(500).json({ error: 'Recipient account unavailable' });
+  const recipientUser = db.prepare('SELECT * FROM users WHERE id = ?').get(to.user_id);
+  if (!recipientUser) return res.status(500).json({ error: 'Recipient account unavailable' });
 
   db.exec('BEGIN');
   try {
@@ -376,11 +390,11 @@ app.post('/api/transfer', (req, res) => {
     db.prepare('UPDATE accounts SET balance = ? WHERE id = ?').run(newTo, to.id);
 
     const ref = newReference();
-    insertTransaction({ userId: user.id, type: 'debit', category: 'TRANSFER', amount: amt, counterparty: `SENT TO ${recipientUser.full_name.toUpperCase()} (${recipientPhone})`, description: desc, reference: ref, balanceAfter: newFrom, accountId: from.id });
-    insertTransaction({ userId: recipientUser.id, type: 'credit', category: 'TRANSFER', amount: amt, counterparty: `FROM ${user.full_name.toUpperCase()} (${user.phone})`, description: desc, reference: ref, balanceAfter: newTo, accountId: to.id });
+    insertTransaction({ userId: user.id, type: 'debit', category: 'TRANSFER', amount: amt, counterparty: `SENT TO ${recipientUser.full_name.toUpperCase()} (${accNum})`, description: desc, reference: ref, balanceAfter: newFrom, accountId: from.id });
+    insertTransaction({ userId: recipientUser.id, type: 'credit', category: 'TRANSFER', amount: amt, counterparty: `FROM ${user.full_name.toUpperCase()} (${user.account_number})`, description: desc, reference: ref, balanceAfter: newTo, accountId: to.id });
 
-    pushNotification(user.id, `You sent $${amt.toLocaleString()} to ${recipientUser.full_name} (${recipientPhone}).`, 'debit');
-    pushNotification(recipientUser.id, `You received $${amt.toLocaleString()} from ${user.full_name} (${user.phone}).`, 'credit');
+    pushNotification(user.id, `You sent $${amt.toLocaleString()} to ${recipientUser.full_name} (${accNum}).`, 'debit');
+    pushNotification(recipientUser.id, `You received $${amt.toLocaleString()} from ${user.full_name} (${user.account_number}).`, 'credit');
 
     const total = syncUserBalance(user.id);
     syncUserBalance(recipientUser.id);
@@ -538,12 +552,12 @@ app.post('/api/customer-care', (req, res) => {
 app.get('/api/pay/recipient', (req, res) => {
   const user = getSessionUser(req);
   if (!user) return res.status(401).json({ error: 'Not authenticated' });
-  const phone = cleanPhone(req.query.phone || '');
-  if (!/^\d{10,12}$/.test(phone)) return res.status(400).json({ error: 'Enter a valid phone number' });
-  const recipient = db.prepare('SELECT full_name, phone, account_number FROM users WHERE phone = ?').get(phone);
-  if (!recipient) return res.status(404).json({ error: 'No Chase Bank account found with this phone number' });
-  if (recipient.phone === user.phone) return res.status(400).json({ error: 'This is your own phone number' });
-  res.json(recipient);
+  const accNum = String(req.query.account || '').trim();
+  if (!/^52\d{8}$/.test(accNum)) return res.status(400).json({ error: 'Enter a valid recipient account number (starts with 52)' });
+  const account = db.prepare('SELECT a.*, u.full_name, u.phone, u.username FROM accounts a JOIN users u ON u.id = a.user_id WHERE a.account_number = ?').get(accNum);
+  if (!account) return res.status(404).json({ error: 'No Chase Bank account found with this account number' });
+  if (account.user_id === user.id) return res.status(400).json({ error: 'This is your own account number' });
+  res.json({ full_name: account.full_name, phone: account.phone, username: account.username, account_number: account.account_number });
 });
 
 app.get('/api/health', (req, res) => {

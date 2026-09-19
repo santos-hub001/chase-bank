@@ -233,7 +233,7 @@ function viewLanding() {
       <div>
         <div class="hero-badge"><span class="dot"></span> AMERICA'S TRUSTED DIGITAL BANK</div>
         <h1>Banking that moves as <span class="grad">fast as you</span></h1>
-        <p>Send money to any Chase Bank account instantly using nothing more than a phone number. Secure, simple and always available.</p>
+        <p>Send money to any Chase Bank account instantly using just their account number. Secure, simple and always available.</p>
         <div class="hero-cta">
           <button class="btn btn-primary btn-lg" onclick="location.hash='#/signup'">${Icons.user} Open an Account</button>
           <button class="btn btn-outline btn-lg" onclick="location.hash='#/login'">${Icons.lock} Login</button>
@@ -250,7 +250,7 @@ function viewLanding() {
         </div>
         <div class="hc-acc">
           <span>SANTOS AKPAN</span>
-          <span>0801 •••• ••••</span>
+          <span>52•• •••• •••</span>
         </div>
         <div class="hero-stats">
           <div class="hs"><b>500k+</b><span>Customers</span></div>
@@ -270,7 +270,7 @@ function viewLanding() {
       <div class="card card-hover feat-card fc-blue">
         <div class="f-icon">${Icons.send}</div>
         <h3>Instant Transfers</h3>
-        <p>Send money to any Chase account in seconds using just a phone number — your phone number is your account number.</p>
+        <p>Send money to any Chase account in seconds using just an account number — every account number starts with 52.</p>
       </div>
       <div class="card card-hover feat-card fc-green">
         <div class="f-icon">${Icons.shield}</div>
@@ -297,7 +297,7 @@ function viewLanding() {
         <div class="step">
           <div class="num">1</div>
           <h3>Create your account</h3>
-          <p>Enter your name, email and phone number. Your phone number automatically becomes your account number.</p>
+          <p>Enter your first and last name, pick a unique username and verify your phone. We issue you an account number that starts with 52.</p>
         </div>
         <div class="step">
           <div class="num">2</div>
@@ -339,7 +339,7 @@ function renderFooterLanding() {
     <div class="footer-inner">
       <div>
         <a href="#/" class="brand"><img src="Logo/Chase logo.png" alt="Chase Bank"><span class="brand-name">Chase Bank</span></a>
-        <p class="f-desc">A modern digital bank built for speed and simplicity. Your phone number is your account number — banking has never been easier.</p>
+        <p class="f-desc">A modern digital bank built for speed and simplicity. Every account gets a unique account number starting with 52 — banking has never been easier.</p>
       </div>
       <div>
         <h4>Banking</h4>
@@ -380,7 +380,7 @@ function authLayout(title, subtitle, formHtml) {
       <a href="#/" class="brand"><img src="Logo/Chase logo.png" alt="Chase Bank"><span class="brand-name">Chase Bank</span></a>
       <div class="auth-quote">
         <h2>Money moving at the speed of life.</h2>
-        <p>Open an account with your phone number and start sending money anywhere, anytime. Your phone number is your account number.</p>
+        <p>Open an account in minutes and start sending money anywhere, anytime. Log in with your unique username and share your account number to receive payments.</p>
       </div>
       <div class="auth-foot">
         <span>Secure banking · SSL Protected · NDPR Compliant</span>
@@ -407,14 +407,14 @@ function eyeButton() {
 function viewLogin() {
   return authLayout(
     'Welcome back',
-    'Log in with your phone number and password.',
+    'Log in with your username or phone number and password.',
     `
     <div class="form-error" id="loginError"></div>
     <form id="loginForm">
       <div class="form-group">
-        <label class="label" for="loginPhone">Phone Number</label>
+        <label class="label" for="loginIdentifier">Username or Phone Number</label>
         <div class="input-wrap">
-          <input class="input" type="tel" id="loginPhone" inputmode="numeric" placeholder="e.g. 08012345678" autocomplete="tel" maxlength="12">
+          <input class="input" type="text" id="loginIdentifier" placeholder="e.g. adaeze or 08123456789" autocomplete="username">
         </div>
       </div>
       <div class="form-group">
@@ -435,15 +435,30 @@ function viewLogin() {
 function viewSignup() {
   return authLayout(
     'Create your account',
-    'Your phone number becomes your account number.',
+    'Pick a unique username — we issue your account number, which starts with "52".',
     `
     <div class="form-error" id="signupError"></div>
     <form id="signupForm">
-      <div class="form-group">
-        <label class="label" for="suName">Full Name</label>
-        <div class="input-wrap">
-          <input class="input" type="text" id="suName" placeholder="e.g. SANTOS AKPAN" autocomplete="name">
+      <div class="form-row">
+        <div class="form-group">
+          <label class="label" for="suFirst">First Name</label>
+          <div class="input-wrap">
+            <input class="input" type="text" id="suFirst" placeholder="e.g. SANTOS" autocomplete="given-name">
+          </div>
         </div>
+        <div class="form-group">
+          <label class="label" for="suLast">Last Name</label>
+          <div class="input-wrap">
+            <input class="input" type="text" id="suLast" placeholder="e.g. AKPAN" autocomplete="family-name">
+          </div>
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="label" for="suUsername">Username</label>
+        <div class="input-wrap">
+          <input class="input" type="text" id="suUsername" placeholder="e.g. santos_akpan" autocomplete="username">
+        </div>
+        <div class="pass-hint" id="suUsernameHint">Choose a unique username — it is how you log in.</div>
       </div>
       <div class="form-group">
         <label class="label" for="suEmail">Email Address</label>
@@ -452,7 +467,7 @@ function viewSignup() {
         </div>
       </div>
       <div class="form-group">
-        <label class="label" for="suPhone">Phone Number <span class="text-muted">(becomes your account number)</span></label>
+        <label class="label" for="suPhone">Phone Number <span class="text-muted">(for verification only)</span></label>
         <div class="input-wrap">
           <input class="input" type="tel" id="suPhone" inputmode="numeric" placeholder="e.g. 08012345678" autocomplete="tel" maxlength="12">
         </div>
@@ -608,7 +623,7 @@ async function viewDashboard() {
           <div class="panel-head"><h3>${Icons.send} Quick Transfer</h3></div>
           <div style="padding:18px 20px;">
             <div class="form-group" style="margin-bottom:12px;">
-              <input class="input" id="qiPhone" type="tel" placeholder="Recipient phone number" inputmode="numeric" maxlength="12">
+              <input class="input" id="qiPhone" type="tel" placeholder="Recipient account number" inputmode="numeric" maxlength="10">
             </div>
             <div class="form-group" style="margin-bottom:12px;">
               <input class="input" id="qiAmount" type="number" min="1" placeholder="Amount ($)" inputmode="decimal">
@@ -656,15 +671,15 @@ async function viewSend() {
   <div class="app-shell" style="max-width:640px;">
     <div class="page-head">
       <h1>${Icons.send} Send Money</h1>
-      <p>Transfer instantly to any Chase Bank account using their phone number.</p>
+      <p>Transfer instantly to any Chase Bank account using their account number (starts with "52").</p>
     </div>
     <div class="card">
       <form id="sendForm" novalidate>
         <div class="form-error" id="sendError"></div>
         <div class="form-group">
-          <label class="label">Recipient Phone Number <span class="text-muted">(their account number)</span></label>
+          <label class="label">Recipient Account Number</label>
           <div class="input-wrap">
-            <input class="input" type="tel" id="sendPhone" inputmode="numeric" placeholder="e.g. 07011112222" maxlength="12">
+            <input class="input" type="tel" id="sendPhone" inputmode="numeric" placeholder="e.g. 52000000001" maxlength="10">
           </div>
           <div id="recipientResult"></div>
         </div>
@@ -828,7 +843,7 @@ async function viewMe() {
       </div>
       <div>
         <h2>${me.full_name}</h2>
-        <p>${firstName}, your phone number is your account number — share it freely for transfers.</p>
+        <p>${firstName}, your unique account number is <b>${me.account_number}</b> — share it freely for transfers.</p>
       </div>
       <div class="member-since"><div>MEMBER SINCE</div><b>${memberDate}</b></div>
     </div>
@@ -836,6 +851,10 @@ async function viewMe() {
       <div class="card profile-field">
         <div class="pf-icon">${Icons.user}</div>
         <div><div class="pf-label">Full Name</div><div class="pf-value">${me.full_name}</div></div>
+      </div>
+      <div class="card profile-field">
+        <div class="pf-icon">${Icons.at}</div>
+        <div><div class="pf-label">Username</div><div class="pf-value">@${me.username || ''}</div></div>
       </div>
       <div class="card profile-field">
         <div class="pf-icon">${Icons.phone}</div>
@@ -995,7 +1014,7 @@ function confirmLogout() {
       <div class="modal" style="max-width:400px; text-align:center;">
         <div class="conf-icon" style="width:56px; height:56px; margin:0 auto 14px; border-radius:50%; background:var(--red-soft); color:var(--red); display:flex; align-items:center; justify-content:center;">${Icons.logout}</div>
         <h3 class="modal-title" style="font-size:19px;">Log out of Chase Bank?</h3>
-        <p class="modal-desc" style="margin:8px auto 22px; max-width:300px;">Are you sure you want to log out? You will need your password and phone number to sign in again.</p>
+        <p class="modal-desc" style="margin:8px auto 22px; max-width:300px;">Are you sure you want to log out? You will need your username (or phone number) and password to sign in again.</p>
         <div style="display:flex; gap:10px;">
           <button class="btn btn-ghost btn-block" id="logoutCancel">Cancel</button>
           <button class="btn btn-danger-soft btn-block" id="logoutConfirm">${Icons.logout} Yes, Log Out</button>
@@ -1412,16 +1431,18 @@ function bindLogin() {
   $('#loginForm').onsubmit = async (e) => {
     e.preventDefault();
     hideFormError('loginError');
-    const phone = $('#loginPhone').value.trim();
+    const identifier = $('#loginIdentifier').value.trim();
     const password = $('#loginPassword').value;
-    if (!/^\d{10,12}$/.test(phone)) { showFormError('loginError', 'Enter a valid phone number'); return; }
+    const isPhone = /^\d{10,12}$/.test(identifier);
+    const isUsername = /^[a-zA-Z0-9_]{3,20}$/.test(identifier);
+    if (!isPhone && !isUsername) { showFormError('loginError', 'Enter your username or a valid phone number'); return; }
     if (!password) { showFormError('loginError', 'Enter your password'); return; }
 
     const btn = $('#loginBtn');
     btn.disabled = true;
     btn.innerHTML = '<span class="spinner"></span> Logging in...';
     try {
-      await API.login({ phone, password });
+      await API.login({ identifier, password });
       toast('Welcome back to Chase Bank', 'success');
       navigate('dashboard');
     } catch (err) {
@@ -1433,9 +1454,22 @@ function bindLogin() {
 }
 
 function bindSignup() {
-  const name = $('#suName');
+  const first = $('#suFirst');
+  const last = $('#suLast');
+  const username = $('#suUsername');
   const pass = $('#suPassword');
   pass.addEventListener('input', () => updateStrength(pass));
+
+  const usernameInput = username;
+  usernameInput.addEventListener('input', () => {
+    const v = usernameInput.value.trim();
+    const hint = $('#suUsernameHint');
+    if (!hint) return;
+    if (!v) { hint.textContent = 'Choose a unique username — it is how you log in.'; hint.className = 'pass-hint'; return; }
+    const ok = /^[a-zA-Z0-9_]{3,20}$/.test(v);
+    hint.textContent = ok ? 'Username available to use.' : '3-20 characters: letters, numbers or underscores.';
+    hint.className = 'pass-hint ' + (ok ? 'strong' : 'weak');
+  });
 
   State.phoneVerified = null;
   const phoneInput = $('#suPhone');
@@ -1570,7 +1604,9 @@ function bindSignup() {
     e.preventDefault();
     hideFormError('signupError');
 
-    const full_name = name.value.trim();
+    const first_name = first.value.trim();
+    const last_name = last.value.trim();
+    const handle = username.value.trim();
     const email = $('#suEmail').value.trim();
     const phone = phoneInput.value.trim();
     const password = pass.value;
@@ -1578,7 +1614,9 @@ function bindSignup() {
     const transfer_pin = $('#suPin').value;
     const confirm_transfer_pin = $('#suConfirmPin').value;
 
-    if (!full_name || full_name.length < 3) return showFormError('signupError', 'Please enter your full name');
+    if (!/^[A-Za-z]{2,30}$/.test(first_name)) return showFormError('signupError', 'Enter your first name (letters only)');
+    if (!/^[A-Za-z]{2,30}$/.test(last_name)) return showFormError('signupError', 'Enter your last name (letters only)');
+    if (!/^[a-zA-Z0-9_]{3,20}$/.test(handle)) return showFormError('signupError', 'Username must be 3-20 characters (letters, numbers or underscores)');
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return showFormError('signupError', 'Enter a valid email address');
     if (!/^\d{10,12}$/.test(phone)) return showFormError('signupError', 'Enter a valid phone number (10-12 digits)');
     if (password.length < 6) return showFormError('signupError', 'Password must be at least 6 characters');
@@ -1591,7 +1629,7 @@ function bindSignup() {
     btn.disabled = true;
     btn.innerHTML = '<span class="spinner"></span> Creating account...';
     try {
-      await API.register({ full_name, email, phone, password, confirm_password, transfer_pin, confirm_transfer_pin });
+      await API.register({ first_name, last_name, username: handle, email, phone, password, confirm_password, transfer_pin, confirm_transfer_pin });
       State.phoneVerified = null;
       toast('Account created! $50,000 welcome bonus credited.', 'success');
       navigate('dashboard');
@@ -1614,11 +1652,11 @@ function bindDashboard() {
 }
 
 async function startQuickTransfer() {
-  const phone = $('#qiPhone').value.trim();
+  const acc = $('#qiPhone').value.trim();
   const amount = $('#qiAmount').value;
-  if (!/^\d{10,12}$/.test(phone)) { toast('Enter a valid recipient phone number', 'error'); return; }
+  if (!/^52\d{8}$/.test(acc)) { toast('Enter a valid recipient account number (starts with 52)', 'error'); return; }
   if (!(Number(amount) > 0)) { toast('Enter a valid amount', 'error'); return; }
-  openingTransfer(phone, amount, '');
+  openingTransfer(acc, amount, '');
 }
 
 /* ---------------- Send flow ---------------- */
@@ -1632,16 +1670,16 @@ function bindSend() {
   }
 
   $('#sendPhone').addEventListener('input', debounce(async () => {
-    const phone = $('#sendPhone').value.trim();
+    const acc = $('#sendPhone').value.trim();
     const box = $('#recipientResult');
     box.innerHTML = '';
-    if (!/^\d{10,12}$/.test(phone)) return;
+    if (!/^52\d{8}$/.test(acc)) return;
     try {
-      const r = await API.recipient(phone);
+      const r = await API.recipient(acc);
       box.innerHTML = `
         <div class="recipient-card">
           <div class="rc-avatar">${initials(r.full_name)}</div>
-          <div><div class="rc-name">${r.full_name}</div><div class="rc-phone">${r.phone}</div></div>
+          <div><div class="rc-name">${r.full_name}</div><div class="rc-phone">@${r.username || ''} · ${r.account_number}</div></div>
           ${Icons.check}
         </div>`;
     } catch (e) {
@@ -1652,24 +1690,24 @@ function bindSend() {
   $('#sendForm').onsubmit = (e) => {
     e.preventDefault();
     hideFormError('sendError');
-    const phone = $('#sendPhone').value.trim();
+    const acc = $('#sendPhone').value.trim();
     const amount = $('#sendAmount').value;
     const desc = $('#sendDesc').value.trim();
-    if (!/^\d{10,12}$/.test(phone)) { showFormError('sendError', 'Enter a valid recipient phone number'); return; }
+    if (!/^52\d{8}$/.test(acc)) { showFormError('sendError', 'Enter a valid recipient account number (starts with 52)'); return; }
     if (!(Number(amount) > 0)) { showFormError('sendError', 'Enter a valid amount'); return; }
-    openingTransfer(phone, amount, desc, 'sendError');
+    openingTransfer(acc, amount, desc, 'sendError');
   };
 }
 
-async function openingTransfer(phone, amount, desc, errorId) {
+async function openingTransfer(accNum, amount, desc, errorId) {
   try {
-    const r = await API.recipient(phone);
+    const r = await API.recipient(accNum);
     const acctSel = $('#sendAccount');
     const accountId = acctSel ? Number(acctSel.value) : undefined;
     const result = await openPinModal({
       title: 'Confirm Transfer',
       amount,
-      onSuccess: (pin) => API.transfer({ recipient: phone, amount, pin, description: desc || '', account_id: accountId })
+      onSuccess: (pin) => API.transfer({ recipient: accNum, amount, pin, description: desc || '', account_id: accountId })
     });
     if (!result.success) return;
     await showMoneyAnimation({
@@ -1682,7 +1720,7 @@ async function openingTransfer(phone, amount, desc, errorId) {
         amount,
         reference: result.data.reference,
         description: desc || 'Bank transfer',
-        counterparty: `SENT TO ${r.full_name.toUpperCase()} (${phone})`,
+        counterparty: `SENT TO ${r.full_name.toUpperCase()} (${accNum})`,
         balance_after: result.data.balance,
         created_at: new Date().toISOString()
       }

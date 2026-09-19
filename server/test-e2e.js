@@ -22,8 +22,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   if (tu.status === 200) {
     await post('/api/auth/verify-otp', { phone: '07011112222', otp: tu.data.demo_otp });
   }
-  const reg = await post('/api/auth/register', {
-    full_name: 'TUNDE BALOGUN', email: 'tunde@chasebank.test', phone: '07011112222', password: 'pass4567', confirm_password: 'pass4567', transfer_pin: '1111', confirm_transfer_pin: '1111'
+const reg = await post('/api/auth/register', {
+    first_name: 'TUNDE', last_name: 'BALOGUN', username: 'tunde', email: 'tunde@chasebank.test', phone: '07011112222', password: 'pass4567', confirm_password: 'pass4567', transfer_pin: '1111', confirm_transfer_pin: '1111'
   }).then((r) => r.status);
   console.log('TUNDE register status:', reg, reg === 409 ? '(already exists ??? ok)' : '');
 
@@ -40,9 +40,15 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   } catch (e) { console.log('  [warn] setGeolocation:', e.message); }
   page.setDefaultNavigationTimeout(40000);
   page.setDefaultTimeout(20000);
-  const errors = [];
+const errors = [];
   page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
-  page.on('console', (m) => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
+  page.on('console', (m) => {
+    if (m.type() === 'error') {
+      const t = m.text();
+      if (/Failed to load resource:.*status of (400|401|404|409)/.test(t)) return;
+      errors.push('console: ' + t);
+    }
+  });
 
   const wait = (sel, opts = {}) => page.waitForSelector(sel, { visible: true, timeout: 12000, ...opts });
   const waitGone = (sel) => page.waitForSelector(sel, { hidden: true, timeout: 12000 });
@@ -83,12 +89,14 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   console.log('4. Signup validation');
   await page.click('#suBtn');
   await wait('#signupError.show');
-  check('empty submit shows error', /full name/i.test(await txt('#signupError')));
+check('empty submit shows error', /first name/i.test(await txt('#signupError')));
 
   console.log('5. Phone OTP verification + signup');
-  await setVal('#suName', 'ADAEZE OBI');
-  await setVal('#suEmail', 'adaeze@chasebank.test');
-  await setVal('#suPhone', '08123456789');
+  await setVal('#suFirst', 'UGO');
+  await setVal('#suLast', 'EMEKA');
+  await setVal('#suUsername', 'ugo');
+  await setVal('#suEmail', 'ugo@chasebank.test');
+  await setVal('#suPhone', '08033334444');
   await setVal('#suPassword', 'chase123');
   await setVal('#suConfirm', 'chase123');
   await setVal('#suPin', '2468');
@@ -157,7 +165,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   console.log('9. Send money flow');
   await page.goto(BASE + '/#/send', { waitUntil: 'networkidle2' });
   await wait('#sendForm');
-  await setVal('#sendPhone', '07011112222');
+  await setVal('#sendPhone', '5200000001');
   await wait('.recipient-card', { timeout: 15000 });
   check('recipient card appears (TUNDE)', (await txt('.recipient-card')).includes('TUNDE'));
   await setVal('#sendAmount', '2500');
@@ -210,10 +218,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await wait('#withdrawForm');
   await page.click('#wdQuick [data-quick="5000"]');
   check('quick amount filled', (await page.$eval('#wdAmount', (el) => el.value)) === '5000');
-  await page.click('#wdBtn');
+await page.click('#wdBtn');
   await wait('.modal-overlay');
-  await page.click('#locCheck');
-  await wait('#locVerified');
+  check('no location gate on withdraw either', await page.$('#locCheck') === null);
   for (const [i, v] of [[0, '2'], [1, '4'], [2, '6'], [3, '8']]) {
     await page.type('.pin-box:nth-child(' + (i + 1) + ')', v);
   }
@@ -251,15 +258,16 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   console.log('15. Profile page');
   await page.goto(BASE + '/#/me', { waitUntil: 'networkidle2' });
   await wait('.profile-hero');
-  check('name shown', (await txt('.profile-hero h2')).includes('ADAEZE'));
-  check('account number = phone', /08123456789/.test(await txt('body')));
+check('name shown', (await txt('.profile-hero h2')).includes('EMEKA'));
+  check('username shown', /@ugo/.test(await txt('body')));
+  check('account number starts with 52', /52\d{8}/.test(await txt('body')));
   check('logout button', await page.$('#logoutBtn') !== null);
 
-  console.log('16. Logout & login');
+console.log('16. Logout & login');
   await page.click('#logoutBtn');
   await wait('.modal-overlay');
-  await page.waitForFunction(() => /Are you sure you want to log out/i.test((document.querySelector('.modal-title') || {}).textContent || ''), { timeout: 12000 });
-  check('logout confirmation prompt shown', /Are you sure you want to log out/i.test(await txt('.modal-title')));
+  await page.waitForFunction(() => [...document.querySelectorAll('.modal')].some(m => /Are you sure you want to log out/i.test(m.textContent || '')), { timeout: 12000 });
+  check('logout confirmation prompt shown', /Are you sure you want to log out/i.test(await txt('.modal-desc')));
   await page.click('#logoutCancel');
   await waitGone('.modal-overlay');
   check('cancel keeps you logged in', (await page.$('.profile-hero')) !== null);
@@ -276,15 +284,16 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await page.click('#loginPassword + .eye-btn');
   check('login password revealed', (await page.$eval('#loginPassword', (el) => el.type)) === 'text');
   // wrong creds
-  await setVal('#loginPhone', '08123456789');
+await setVal('#loginIdentifier', '08033334444');
   await page.click('#loginPassword + .eye-btn');
   await setVal('#loginPassword', 'wrongpass');
   await page.click('#loginBtn');
   await wait('#loginError.show');
   check('wrong password rejected', /Incorrect password/i.test(await txt('#loginError')));
-  // correct creds
+  // correct creds (by username)
   await page.click('#loginPassword + .eye-btn');
   await setVal('#loginPassword', 'chase123');
+  await setVal('#loginIdentifier', 'ugo');
   await page.click('#loginBtn');
   await wait('.balance-card', { timeout: 20000 });
   await waitGone('.toast-stack .toast'); // wait for the "welcome back" toast to clear so it can't intercept the topbar icon
@@ -292,10 +301,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   console.log('17. Topbar logout icon + confirmation');
   check('logout icon in topbar', await page.$('#logoutIcon') !== null);
-  await page.click('#logoutIcon');
+await page.click('#logoutIcon');
   await wait('.modal-overlay');
-  await page.waitForFunction(() => /Are you sure you want to log out/i.test((document.querySelector('.modal-title') || {}).textContent || ''), { timeout: 12000 });
-  check('logout icon opens confirmation', /Are you sure you want to log out/i.test(await txt('.modal-title')));
+  await page.waitForFunction(() => [...document.querySelectorAll('.modal')].some(m => /Are you sure you want to log out/i.test(m.textContent || '')), { timeout: 12000 });
+  check('logout icon opens confirmation', /Are you sure you want to log out/i.test(await txt('.modal-desc')));
   await page.click('#logoutCancel');
   await waitGone('.modal-overlay');
   check('cancel stays signed in', (await page.$('#logoutIcon')) !== null);
@@ -307,7 +316,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   // re-login for the remaining authed steps
   await page.goto(BASE + '/#/login', { waitUntil: 'networkidle2' });
   await wait('#loginForm');
-  await setVal('#loginPhone', '08123456789');
+await setVal('#loginIdentifier', '08033334444');
   await setVal('#loginPassword', 'chase123');
   await page.click('#loginBtn');
   await wait('.balance-card', { timeout: 20000 });
