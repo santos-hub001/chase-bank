@@ -46,7 +46,7 @@ const errors = [];
   page.on('console', (m) => {
     if (m.type() === 'error') {
       const t = m.text();
-      if (/Failed to load resource:.*status of (400|401|404|409)/.test(t)) return;
+      if (/Failed to load resource:.*status of (400|401|403|404|409)/.test(t)) return;
       errors.push('console: ' + t);
     }
   });
@@ -150,14 +150,15 @@ check('landed on dashboard', page.url().includes('dashboard'));
   check('recent transactions list', await page.$('.tx-item') !== null);
   check('welcome bonus entry', /WELCOME_BONUS|Chase Bank/i.test(txText));
 
-  console.log('7. Balance eye toggle');
+console.log('7. Balance eye toggle');
   const before = await page.$eval('#balanceAmount', (el) => el.className);
   check('balance visible initially', !before.includes('blurred'));
   await page.click('#toggleBalance');
-  const after = await page.$eval('#balanceAmount', (el) => el.className);
-  check('balance blurred/hidden after toggle', after.includes('blurred'));
+  const blurredOk = await page.waitForFunction(() => document.querySelector('#balanceAmount').className.includes('blurred'), { timeout: 5000 }).then(() => true).catch(() => false);
+  check('balance blurred/hidden after toggle', blurredOk);
   await page.click('#toggleBalance');
-  check('balance restored', !(await page.$eval('#balanceAmount', (el) => el.className)).includes('blurred'));
+  const restoredOk = await page.waitForFunction(() => !document.querySelector('#balanceAmount').className.includes('blurred'), { timeout: 5000 }).then(() => true).catch(() => false);
+  check('balance restored', restoredOk);
 
   console.log('8. Quick action icons present');
   for (const sel of ['.qa-send', '.qa-withdraw', '.qa-care', '.qa-me']) {
@@ -435,6 +436,115 @@ await page.click('#rcClose');
   await page.click('#twofaBtn');
   await wait('.balance-card', { timeout: 20000 });
   check('2FA: login with authenticator code succeeds', page.url().includes('dashboard'));
+
+  console.log('21. Admin dashboard');
+  // non-admin route guard
+  await page.goto(BASE + '/#/admin', { waitUntil: 'networkidle2' });
+  await wait('.balance-card');
+  check('admin: non-admin redirected to dashboard', page.url().includes('dashboard'));
+  check('admin: admins-only toast shown', (await bodyText()).includes('Admins only'));
+  check('admin: no admin nav link for ugo', await page.$('[data-nav="admin"]') === null);
+
+  // log out ugo, sign in as seeded admin adaeze
+  await page.click('#logoutIcon');
+  await wait('.modal-overlay');
+  await page.click('#logoutConfirm');
+  await page.waitForFunction(() => location.hash === '' || location.hash === '#/', { timeout: 8000 });
+  await page.goto(BASE + '/#/login', { waitUntil: 'networkidle2' });
+  await wait('#loginForm');
+  await setVal('#loginIdentifier', 'adaeze');
+  await setVal('#loginPassword', 'chase123');
+  await page.click('#loginBtn');
+  await wait('.balance-card', { timeout: 20000 });
+  check('admin: adaeze signs in', page.url().includes('dashboard'));
+  check('admin: admin nav link visible', await page.$('[data-nav="admin"]') !== null);
+
+  await page.goto(BASE + '/#/admin', { waitUntil: 'networkidle2' });
+  await wait('.a-stat');
+  check('admin: overview stats render', (await page.$$('.a-stat')).length >= 5);
+  check('admin: customers stat visible', /Customers/i.test(await bodyText()));
+  check('admin: total balance stat visible', /Total Balance/i.test(await bodyText()));
+
+  await page.click('[data-atab="users"]');
+  await wait('.a-table tbody tr');
+  check('admin: users table renders', (await page.$$('.a-table tbody tr')).length >= 2);
+  check('admin: admin badge on adaeze row', await page.$('.a-badge-admin') !== null);
+  check('admin: tunde present in users list', (await bodyText()).includes('@tunde'));
+
+  await page.click('[data-atab="transactions"]');
+  await wait('#aTxSearch');
+  await wait('.a-table');
+  check('admin: welcome bonus tx visible', (await bodyText()).includes('WELCOME_BONUS'));
+
+  // block tunde through the UI
+  await page.click('[data-atab="users"]');
+  await wait('#aUsersSearch');
+  await wait('.a-table tbody tr');
+  const blockClicked = await page.evaluate(() => {
+    const row = [...document.querySelectorAll('.a-table tbody tr')].find((tr) => tr.textContent.includes('@tunde'));
+    const btn = row && row.querySelector('[data-block]');
+    if (btn) { btn.click(); return true; }
+    return false;
+  });
+  check('admin: block action available for tunde', blockClicked);
+  await wait('.modal-overlay');
+  await page.click('#caOk');
+  const tundeBlocked = await page.waitForFunction(() => {
+    const row = [...document.querySelectorAll('.a-table tbody tr')].find((tr) => tr.textContent.includes('@tunde'));
+    return row && !!row.querySelector('[data-unblock]') && row.classList.contains('row-blocked');
+  }, { timeout: 15000 }).then(() => true).catch(() => false);
+  check('admin: tunde marked blocked', tundeBlocked);
+
+  // blocked customer cannot sign in
+  await page.click('#logoutIcon');
+  await wait('.modal-overlay');
+  await page.click('#logoutConfirm');
+  await page.waitForFunction(() => location.hash === '' || location.hash === '#/', { timeout: 8000 });
+  await page.goto(BASE + '/#/login', { waitUntil: 'networkidle2' });
+  await wait('#loginForm');
+  await setVal('#loginIdentifier', 'tunde');
+  await setVal('#loginPassword', 'pass4567');
+  await page.click('#loginBtn');
+  await wait('#loginError', { timeout: 8000 });
+  check('admin: blocked customer rejected at login', /blocked/i.test(await txt('#loginError')));
+
+  // admin unblocks tunde from the UI
+  await setVal('#loginIdentifier', 'adaeze');
+  await setVal('#loginPassword', 'chase123');
+  await page.click('#loginBtn');
+  await wait('.balance-card', { timeout: 20000 });
+  await page.goto(BASE + '/#/admin', { waitUntil: 'networkidle2' });
+  await wait('[data-atab="users"]');
+  await page.click('[data-atab="users"]');
+  await wait('#aUsersSearch');
+  await wait('.a-table tbody tr');
+  const unblockClicked = await page.evaluate(() => {
+    const row = [...document.querySelectorAll('.a-table tbody tr')].find((tr) => tr.textContent.includes('@tunde'));
+    const btn = row && row.querySelector('[data-unblock]');
+    if (btn) { btn.click(); return true; }
+    return false;
+  });
+  check('admin: unblock action available for tunde', unblockClicked);
+  await wait('.modal-overlay');
+  await page.click('#caOk');
+  const tundeUnblocked = await page.waitForFunction(() => {
+    const row = [...document.querySelectorAll('.a-table tbody tr')].find((tr) => tr.textContent.includes('@tunde'));
+    return row ? !row.querySelector('[data-unblock]') && !row.classList.contains('row-blocked') : false;
+  }, { timeout: 15000 }).then(() => true).catch(() => false);
+  check('admin: tunde unblocked again', tundeUnblocked);
+
+  // tunde can sign in again
+  await page.click('#logoutIcon');
+  await wait('.modal-overlay');
+  await page.click('#logoutConfirm');
+  await page.waitForFunction(() => location.hash === '' || location.hash === '#/', { timeout: 8000 });
+  await page.goto(BASE + '/#/login', { waitUntil: 'networkidle2' });
+  await wait('#loginForm');
+  await setVal('#loginIdentifier', 'tunde');
+  await setVal('#loginPassword', 'pass4567');
+  await page.click('#loginBtn');
+  await wait('.balance-card', { timeout: 20000 });
+  check('admin: tunde can sign in again', page.url().includes('dashboard'));
 
   console.log('');
   console.log('Page errors captured:', errors.length ? errors : 'none');

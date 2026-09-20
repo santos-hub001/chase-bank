@@ -150,9 +150,16 @@ function getSessionUser(req) {
   if (!token) return null;
   const row = db.prepare(`
     SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id
-    WHERE s.token = ? AND s.expires_at > ?
+    WHERE s.token = ? AND s.expires_at > ? AND u.blocked = 0
   `).get(token, now());
   return row || null;
+}
+
+function adminOnly(req) {
+  const user = getSessionUser(req);
+  if (!user) return { status: 401, error: 'Not authenticated' };
+  if (!user.is_admin) return { status: 403, error: 'Admins only' };
+  return { user };
 }
 
 function userAccounts(userId) {
@@ -236,6 +243,8 @@ app.get('/api/auth/me', (req, res) => {
     avatar: user.avatar || null,
     twofa_enabled: !!user.twofa_enabled,
     twofa_setup: !!(user.twofa_secret && !user.twofa_enabled),
+    is_admin: !!user.is_admin,
+    blocked: !!user.blocked,
     created_at: user.created_at,
     accounts: userAccounts(user.id)
   });
@@ -331,6 +340,10 @@ app.post('/api/auth/login', (req, res) => {
     return res.status(401).json({ error: 'Incorrect password' });
   }
 
+  if (user.blocked) {
+    return res.status(403).json({ error: 'This account has been blocked. Please contact support.' });
+  }
+
   if (user.twofa_enabled) {
     const token = newPending2FA(user.id);
     return res.json({ message: 'Two-factor authentication required', twofa_required: true, token });
@@ -356,6 +369,10 @@ app.post('/api/auth/2fa/verify', (req, res) => {
   }
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(pending.userId);
   if (!user) return res.status(401).json({ error: 'Account not found' });
+  if (user.blocked) {
+    pending2FA.delete(token);
+    return res.status(403).json({ error: 'This account has been blocked. Please contact support.' });
+  }
   if (!twofaPasses(user, code)) {
     pending.attempts += 1;
     return res.status(401).json({ error: 'Incorrect authentication code' });
@@ -416,6 +433,96 @@ app.post('/api/auth/2fa/disable', (req, res) => {
   res.json({ message: 'Two-factor authentication disabled' });
 });
 
+/* ---------------- Admin panel ---------------- */
+const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
+function adminUsersQuery() {
+  return `
+    SELECT u.id, u.full_name, u.first_name, u.last_name, u.username, u.email, u.phone, u.account_number,
+           u.balance, u.twofa_enabled, u.is_admin, u.blocked, u.created_at,
+           (SELECT COUNT(*) FROM accounts a WHERE a.user_id = u.id) AS accounts_count,
+           (SELECT COUNT(*) FROM transactions t WHERE t.user_id = u.id) AS tx_count
+    FROM users u
+  `;
+}
+
+app.get('/api/admin/overview', (req, res) => {
+  const guard = adminOnly(req);
+  if (guard.error) return res.status(guard.status).json({ error: guard.error });
+  const users = db.prepare('SELECT COUNT(*) AS c FROM users').get().c;
+  const admins = db.prepare('SELECT COUNT(*) AS c FROM users WHERE is_admin = 1').get().c;
+  const blocked = db.prepare('SELECT COUNT(*) AS c FROM users WHERE blocked = 1').get().c;
+  const accounts = db.prepare('SELECT COUNT(*) AS c FROM accounts').get().c;
+  const totalBalance = round2(db.prepare('SELECT COALESCE(SUM(balance), 0) AS t FROM accounts').get().t);
+  const moneyIn = round2(db.prepare("SELECT COALESCE(SUM(amount), 0) AS t FROM transactions WHERE type = 'credit'").get().t);
+  const withdrawals = round2(db.prepare("SELECT COALESCE(SUM(amount), 0) AS t FROM transactions WHERE type = 'debit' AND category = 'WITHDRAWAL'").get().t);
+  const transfers = round2(db.prepare("SELECT COALESCE(SUM(amount), 0) AS t FROM transactions WHERE category = 'TRANSFER'").get().t);
+  const transactions = db.prepare('SELECT COUNT(*) AS c FROM transactions').get().c;
+  res.json({ users, admins, blocked, accounts, total_balance: totalBalance, money_in: moneyIn, withdrawals, transfers, transactions });
+});
+
+app.get('/api/admin/users', (req, res) => {
+  const guard = adminOnly(req);
+  if (guard.error) return res.status(guard.status).json({ error: guard.error });
+  const q = String(req.query.q || '').trim();
+  let rows;
+  if (q) {
+    const like = '%' + q + '%';
+    rows = db.prepare(adminUsersQuery() + 'WHERE u.full_name LIKE ? OR u.username LIKE ? OR u.phone LIKE ? OR u.email LIKE ? OR u.account_number LIKE ? ORDER BY u.id ASC')
+      .all(like, like, like, like, like);
+  } else {
+    rows = db.prepare(adminUsersQuery() + 'ORDER BY u.id ASC').all();
+  }
+  res.json(rows.map((u) => ({
+    ...u,
+    balance: round2(u.balance),
+    twofa_enabled: !!u.twofa_enabled,
+    is_admin: !!u.is_admin,
+    blocked: !!u.blocked
+  })));
+});
+
+app.get('/api/admin/transactions', (req, res) => {
+  const guard = adminOnly(req);
+  if (guard.error) return res.status(guard.status).json({ error: guard.error });
+  const q = String(req.query.q || '').trim();
+  const limit = Math.min(Number(req.query.limit) || 50, 200);
+  const base = `
+    SELECT t.*, u.full_name AS user_name, u.username AS user_username
+    FROM transactions t JOIN users u ON u.id = t.user_id
+  `;
+  let rows;
+  if (q) {
+    const like = '%' + q + '%';
+    rows = db.prepare(base + 'WHERE u.full_name LIKE ? OR u.username LIKE ? OR t.reference LIKE ? OR COALESCE(t.counterparty, \'\') LIKE ? OR CAST(t.amount AS TEXT) LIKE ? ORDER BY t.id DESC LIMIT ?')
+      .all(like, like, like, like, like, limit);
+  } else {
+    rows = db.prepare(base + 'ORDER BY t.id DESC LIMIT ?').all(limit);
+  }
+  res.json(rows.map((t) => ({ ...t, amount: round2(t.amount), balance_after: round2(t.balance_after) })));
+});
+
+app.post('/api/admin/users/:id/block', (req, res) => {
+  const guard = adminOnly(req);
+  if (guard.error) return res.status(guard.status).json({ error: guard.error });
+  const target = db.prepare('SELECT * FROM users WHERE id = ?').get(Number(req.params.id));
+  if (!target) return res.status(404).json({ error: 'User not found' });
+  if (target.id === guard.user.id) return res.status(400).json({ error: 'You cannot block your own account' });
+  if (target.is_admin) return res.status(400).json({ error: 'Cannot block an administrator' });
+  db.prepare('UPDATE users SET blocked = 1 WHERE id = ?').run(target.id);
+  db.prepare('DELETE FROM sessions WHERE user_id = ?').run(target.id);
+  res.json({ message: 'Account blocked', blocked: true, id: target.id });
+});
+
+app.post('/api/admin/users/:id/unblock', (req, res) => {
+  const guard = adminOnly(req);
+  if (guard.error) return res.status(guard.status).json({ error: guard.error });
+  const target = db.prepare('SELECT * FROM users WHERE id = ?').get(Number(req.params.id));
+  if (!target) return res.status(404).json({ error: 'User not found' });
+  db.prepare('UPDATE users SET blocked = 0 WHERE id = ?').run(target.id);
+  res.json({ message: 'Account unblocked', blocked: false, id: target.id });
+});
+
 app.post('/api/auth/logout', (req, res) => {
   destroySession(req.cookiesToken);
   res.clearCookie('chase_session');
@@ -437,6 +544,8 @@ app.get('/api/account', (req, res) => {
     avatar: user.avatar || null,
     twofa_enabled: !!user.twofa_enabled,
     twofa_setup: !!(user.twofa_secret && !user.twofa_enabled),
+    is_admin: !!user.is_admin,
+    blocked: !!user.blocked,
     created_at: user.created_at,
     accounts: userAccounts(user.id)
   });

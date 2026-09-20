@@ -222,6 +222,58 @@ function check(name, cond, extra = '') {
   let tk2 = await req('/api/auth/login', { method: 'POST', body: { identifier: 'kemi', password: 'secret123' } }, kemi);
   check('2FA: login direct again after disable', tk2.status === 200 && !tk2.data.twofa_required);
 
+  // 18. Admin dashboard
+  console.log('\n-- Admin panel --');
+  // kemi is signed in but not an admin
+  r = await req('/api/admin/overview', {}, kemi);
+  check('admin: non-admin overview 403', r.status === 403);
+  r = await req('/api/admin/users', {}, {});
+  check('admin: unauthenticated users 401', r.status === 401);
+
+  // sign in as the seeded admin (adaeze / chase123)
+  const admin = {};
+  let ta = await req('/api/auth/login', { method: 'POST', body: { identifier: 'adaeze', password: 'chase123' } }, admin);
+  check('admin: adaeze signs in', ta.status === 200 && !ta.data.twofa_required, JSON.stringify(ta.data));
+
+  r = await req('/api/admin/overview', {}, admin);
+  check('admin: overview 200', r.status === 200);
+  check('admin: overview counts', r.data.users >= 3 && r.data.accounts >= 3 && r.data.admins >= 1, JSON.stringify(r.data));
+  check('admin: overview balances rounded', r.data.total_balance > 0 && Number.isFinite(r.data.total_balance) && r.data.transactions >= 1 && r.data.money_in > 0);
+
+  r = await req('/api/admin/users', {}, admin);
+  check('admin: users list 200', r.status === 200 && Array.isArray(r.data));
+  check('admin: users includes all seeded customers', ['tunde', 'adaeze', 'santos', 'kemi'].every((u) => r.data.some((x) => x.username === u)), JSON.stringify(r.data.map((x) => x.username)));
+  const tundeRow = r.data.find((x) => x.username === 'tunde');
+  const adaezeRow = r.data.find((x) => x.username === 'adaeze');
+  check('admin: adaeze flagged admin', adaezeRow && adaezeRow.is_admin === true);
+  check('admin: tunde not blocked yet', tundeRow && tundeRow.blocked === false);
+
+  r = await req('/api/admin/users?q=kemi', {}, admin);
+  check('admin: user search works', r.status === 200 && r.data.length === 1 && r.data[0].username === 'kemi');
+
+  r = await req('/api/admin/transactions', {}, admin);
+  check('admin: transactions list 200', r.status === 200 && Array.isArray(r.data) && r.data.length >= 1);
+  check('admin: transactions joined with user name', r.data[0].user_name && r.data[0].user_username, JSON.stringify(r.data[0]));
+
+  // block / unblock tunde
+  r = await req('/api/admin/users/' + tundeRow.id + '/block', { method: 'POST' }, admin);
+  check('admin: block tunde 200', r.status === 200 && r.data.blocked === true);
+  r = await req('/api/auth/login', { method: 'POST', body: { identifier: 'tunde', password: 'pass4567' } }, {});
+  check('admin: blocked tunde login 403', r.status === 403 && /blocked/i.test(r.data.error));
+  const anon = {};
+  r = await req('/api/admin/users', {}, anon);
+  check('admin: unauthenticated still 401', r.status === 401);
+  r = await req('/api/admin/users/' + tundeRow.id + '/unblock', { method: 'POST' }, admin);
+  check('admin: unblock tunde 200', r.status === 200 && r.data.blocked === false);
+  r = await req('/api/auth/login', { method: 'POST', body: { identifier: 'tunde', password: 'pass4567' } }, {});
+  check('admin: tunde can sign in again', r.status === 200);
+
+  // guardrails: cannot block an admin or yourself
+  r = await req('/api/admin/users/' + adaezeRow.id + '/block', { method: 'POST' }, admin);
+  check('admin: cannot block an administrator', r.status === 400, JSON.stringify(r.data));
+  r = await req('/api/admin/users/' + adaezeRow.id + '/block', { method: 'POST' }, admin);
+  check('admin: cannot block self', r.status === 400);
+
   console.log('');
   console.log(`RESULT: ${okCount} passed, ${failCount} failed`);
   process.exit(failCount > 0 ? 1 : 0);

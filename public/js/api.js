@@ -40,5 +40,10 @@ const API = {
   notifications: () => api('/api/notifications'),
   readAllNotifications: () => api('/api/notifications/readall', { method: 'PUT' }),
   customerCare: (body) => api('/api/customer-care', { method: 'POST', body }),
-  recipient: (account) => api('/api/pay/recipient?account=' + encodeURIComponent(account))
+  recipient: (account) => api('/api/pay/recipient?account=' + encodeURIComponent(account)),
+  adminOverview: () => api('/api/admin/overview'),
+  adminUsers: (q) => api('/api/admin/users' + (q ? '?q=' + encodeURIComponent(q) : '')),
+  adminTransactions: (q) => api('/api/admin/transactions' + (q ? '?q=' + encodeURIComponent(q) : '')),
+  adminBlock: (id) => api('/api/admin/users/' + id + '/block', { method: 'POST' }),
+  adminUnblock: (id) => api('/api/admin/users/' + id + '/unblock', { method: 'POST' })
 };

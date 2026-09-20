@@ -55,6 +55,11 @@ Production dependencies: `qrcode` (authenticator QR codes) + `puppeteer-core` fo
   recover with 10 one-time backup codes (regenerable), and sign in with a
   6-digit code on a dedicated 2FA step; disabled accounts keep the single-step
   password login
+- **Admin dashboard** (seeded ADAEZE account): bank-wide overview (customers,
+  total balance, money-in, withdrawals, transfers, transactions, accounts,
+  admins, blocked), customer listing with search (name, phone, email, account,
+  username), transaction log with search, and block/unblock actions (admins
+  protected, self-block prevented)
 - Send Money / Withdraw: choose which account to send from or withdraw against
 - Logout with confirmation (from dashboard or the topbar icon)
 
@@ -92,9 +97,9 @@ The signup flow also generates a `demo_otp` code on the page for verification.
 
 ```bash
 # backend API contract suite
-node server/test-backend.js      # 66 backend API checks
-node server/test-frontend.js     # 68 jsdom checks
-node server/test-e2e.js          # 87 headless-Chrome checks
+node server/test-backend.js      # 86 backend API checks
+node server/test-frontend.js     # 86 jsdom checks
+node server/test-e2e.js          # 105 headless-Chrome checks
 
 # full browser E2E (starts its own clean DB; needs the server on :3000)
 node server/test-e2e.js

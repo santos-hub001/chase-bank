@@ -344,6 +344,71 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await sleep(900);
   check('balance after withdraw = 45000', doc.body.innerHTML.includes('$45,000.00'));
 
+  console.log('21. Admin dashboard');
+  // non-admin cannot access the admin area or see the nav link
+  dom.window.location.hash = '#/admin';
+  await sleep(700);
+  check('admin: non-admin redirected away from admin', !dom.window.location.hash.includes('admin'));
+  check('admin: no admin nav link for non-admin', !doc.body.innerHTML.includes('data-nav="admin"'));
+
+  // log out femi and sign in as the seeded admin adaeze
+  dom.window.location.hash = '#/me';
+  await waitFor('#logoutBtn');
+  doc.querySelector('#logoutBtn').click();
+  await sleep(500);
+  doc.querySelector('#logoutConfirm')?.click();
+  await sleep(800);
+  dom.window.location.hash = '#/login';
+  await waitForCond(() => !!doc.querySelector('#loginForm'));
+  doc.querySelector('#loginIdentifier').value = 'adaeze';
+  doc.querySelector('#loginPassword').value = 'chase123';
+  doc.querySelector('#loginBtn').click();
+  await sleep(1200);
+  check('admin: adaeze login lands on dashboard', dom.window.location.hash.includes('dashboard'));
+  check('admin: admin nav link visible for admin', !!doc.querySelector('[data-nav="admin"]'));
+
+  dom.window.location.hash = '#/admin';
+  check('admin: overview stats render', await waitForCond(() => doc.querySelectorAll('.a-stat').length >= 5));
+  check('admin: customers stat present', /Customers/.test(doc.body.innerHTML));
+  check('admin: total balance stat present', /Total Balance/.test(doc.body.innerHTML));
+
+  // users tab
+  doc.querySelector('[data-atab="users"]')?.click();
+  check('admin: users table renders', await waitForCond(() => doc.querySelectorAll('.a-table tbody tr').length >= 2));
+  check('admin: customers listed with admin badge', !!doc.querySelector('.a-badge-admin'));
+  check('admin: femi listed as active', /FEMI/.test(doc.body.innerHTML) && /Active/.test(doc.body.innerHTML));
+
+  // block femi through the UI
+  const femiRow = [...doc.querySelectorAll('.a-table tbody tr')].find((tr) => tr.textContent.includes('FEMI'));
+  const blockBtn = femiRow && femiRow.querySelector('[data-block]');
+  check('admin: block action available for customer', !!blockBtn);
+  blockBtn?.click();
+  check('admin: confirm modal opens', await waitFor('#caOk'));
+  doc.querySelector('#caOk').click();
+  check('admin: femi shown as blocked after confirm', await waitForCond(() => {
+    const row = [...doc.querySelectorAll('.a-table tbody tr')].find((tr) => tr.textContent.includes('FEMI'));
+    return row && !!row.querySelector('[data-unblock]');
+  }));
+
+  // unblock femi again to leave the account usable
+  const femiRow2 = [...doc.querySelectorAll('.a-table tbody tr')].find((tr) => tr.textContent.includes('FEMI'));
+  femiRow2?.querySelector('[data-unblock]')?.click();
+  check('admin: unblock confirm modal opens', await waitFor('#caOk'));
+  doc.querySelector('#caOk').click();
+  check('admin: femi active again', await waitForCond(() => {
+    const row = [...doc.querySelectorAll('.a-table tbody tr')].find((tr) => tr.textContent.includes('FEMI'));
+    return row && !row.querySelector('[data-unblock]') && row.classList.contains('row-blocked') === false;
+  }));
+
+  // transactions tab
+  doc.querySelector('[data-atab="transactions"]')?.click();
+  check('admin: transactions table renders', await waitForCond(() => !!doc.querySelector('#aTxSearch') && doc.querySelectorAll('.a-table tbody tr').length >= 1));
+  check('admin: welcome bonus tx visible', /WELCOME_BONUS/.test(doc.body.innerHTML));
+
+  // back to overview tab
+  doc.querySelector('[data-atab="overview"]')?.click();
+  check('admin: overview tab returns stats', await waitForCond(() => doc.querySelectorAll('.a-stat').length >= 5));
+
   console.log('');
   console.log(`FRONTEND RESULT: ${ok} passed, ${fail} failed`);
   process.exit(fail > 0 ? 1 : 0);

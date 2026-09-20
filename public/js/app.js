@@ -8,7 +8,8 @@ const State = {
   user: null,
   balanceHidden: false,
   unread: 0,
-  txs: []
+  txs: [],
+  adminTab: 'overview'
 };
 let otpCountdownTimer = null;
 
@@ -161,6 +162,7 @@ function renderTopbar() {
           <a href="#/send" data-nav="send"><span>Send</span></a>
           <a href="#/notifications" data-nav="notifications">${Icons.bell}${unreadBadge}<span style="position:relative;display:inline-flex;align-items:center;">&nbsp;Alerts</span></a>
           <a href="#/me" data-nav="me"><span>Me</span></a>
+          ${State.user && State.user.is_admin ? `<a href="#/admin" data-nav="admin">${Icons.crown}<span style="position:relative;display:inline-flex;align-items:center;">&nbsp;Admin</span></a>` : ''}
         ` : `
           <a href="#/login" data-nav="login"><span>Login</span></a>
           <a href="#/signup" data-nav="signup"><span>Open Account</span></a>
@@ -182,6 +184,7 @@ function renderBottomNav() {
       <li><a href="#/send" data-nav="send">${Icons.send}<span>Send</span></a></li>
       <li><a href="#/notifications" data-nav="notifications" style="position:relative;">${Icons.bell}${unreadBadge}<span>Alerts</span></a></li>
       <li><a href="#/me" data-nav="me">${Icons.user}<span>Me</span></a></li>
+      ${State.user && State.user.is_admin ? `<li><a href="#/admin" data-nav="admin">${Icons.crown}<span>Admin</span></a></li>` : ''}
     </ul>
   </nav>`;
 }
@@ -196,7 +199,7 @@ function setActiveNav() {
 
 function routeOf(hash) {
   const h = String(hash || '').replace(/^#/, '').replace(/^\//, '').split('?')[0];
-  const map = { '': 'home', login: 'login', signup: 'signup', dashboard: 'dashboard', my: 'dashboard', send: 'send', withdraw: 'withdraw', notifications: 'notifications', care: 'care', me: 'me', history: 'history' };
+  const map = { '': 'home', login: 'login', signup: 'signup', dashboard: 'dashboard', my: 'dashboard', send: 'send', withdraw: 'withdraw', notifications: 'notifications', care: 'care', me: 'me', history: 'history', admin: 'admin' };
   return map[h] || h;
 }
 
@@ -212,7 +215,7 @@ async function router() {
   const root = appEl();
   const route = routeOf(location.hash);
 
-  if (['dashboard', 'send', 'withdraw', 'notifications', 'care', 'me', 'history'].includes(route)) {
+  if (['dashboard', 'send', 'withdraw', 'notifications', 'care', 'me', 'history', 'admin'].includes(route)) {
     try {
       State.user = await API.me();
     } catch (e) {
@@ -221,6 +224,13 @@ async function router() {
       navigate('login');
       return;
     }
+  }
+
+  if (route === 'admin' && !State.user.is_admin) {
+    toast('Admins only', 'error');
+    State.user = null;
+    navigate('dashboard');
+    return;
   }
 
   if (['login', 'signup'].includes(route) && State.user) {
@@ -239,6 +249,7 @@ async function router() {
     case 'care': html = viewCare(); break;
     case 'me': html = await viewMe(); break;
     case 'history': html = await viewHistory(); break;
+    case 'admin': html = await viewAdmin(); break;
     default: html = viewLanding(); break;
   }
 
@@ -1110,6 +1121,180 @@ async function logoutUser() {
   navigate('');
 }
 
+/* ---------------- View: Admin ---------------- */
+async function viewAdmin() {
+  if (!State.user.is_admin) {
+    toast('Admins only', 'error');
+    navigate('dashboard');
+    return '';
+  }
+  let panel;
+  try {
+    if (State.adminTab === 'users') panel = await renderAdminUsers();
+    else if (State.adminTab === 'transactions') panel = await renderAdminTransactions();
+    else panel = renderAdminOverview(await API.adminOverview());
+  } catch (err) {
+    toast(err.message, 'error');
+    navigate('dashboard');
+    return '';
+  }
+  return `
+  ${renderTopbar()}
+  <div class="app-shell" style="max-width:960px;">
+    <div class="page-head">
+      <h1>${Icons.crown} Admin Dashboard</h1>
+      <p>Bank-wide overview, customers and activity.</p>
+    </div>
+    <div class="a-tabs">
+      <button type="button" class="a-tab${State.adminTab === 'overview' ? ' active' : ''}" data-atab="overview">${Icons.card} Overview</button>
+      <button type="button" class="a-tab${State.adminTab === 'users' ? ' active' : ''}" data-atab="users">${Icons.users} Users</button>
+      <button type="button" class="a-tab${State.adminTab === 'transactions' ? ' active' : ''}" data-atab="transactions">${Icons.history} Transactions</button>
+    </div>
+    <div id="adminPanel">${panel}</div>
+  </div>
+  ${renderBottomNav()}`;
+}
+
+function renderAdminOverview(s) {
+  const stats = [
+    { label: 'Customers', value: s.users, icon: Icons.user, c: 'blue' },
+    { label: 'Accounts', value: s.accounts, icon: Icons.card, c: 'blue' },
+    { label: 'Total Balance', value: fmtMoney(s.total_balance), icon: Icons.wallet, c: 'green' },
+    { label: 'Money In', value: fmtMoney(s.money_in), icon: Icons.arrowDown, c: 'green' },
+    { label: 'Withdrawals', value: fmtMoney(s.withdrawals), icon: Icons.arrowUp, c: 'red' },
+    { label: 'Transfers', value: fmtMoney(s.transfers), icon: Icons.send, c: 'blue' },
+    { label: 'Transactions', value: s.transactions, icon: Icons.history, c: 'gold' },
+    { label: 'Admins', value: s.admins, icon: Icons.crown, c: 'gold' },
+    { label: 'Blocked', value: s.blocked, icon: Icons.lock, c: 'red' }
+  ];
+  return `<div class="a-stats">${stats.map((st) => `
+    <div class="a-stat">
+      <div class="a-stat-ic" data-c="${st.c}">${st.icon}</div>
+      <div class="a-stat-val">${st.value}</div>
+      <div class="a-stat-lb">${st.label}</div>
+    </div>`).join('')}</div>`;
+}
+
+async function renderAdminUsers(q = '') {
+  const list = await API.adminUsers(q);
+  const rows = (list || []).map((u) => `
+    <tr class="${u.blocked ? 'row-blocked' : ''}">
+      <td><div class="a-user">${avatarContent(u)}<div class="a-user-meta"><b>${escapeXml(u.full_name || '')}</b><span>@${escapeXml(u.username || '')}</span></div></div></td>
+      <td class="a-nowrap">${escapeXml(u.phone || '')}</td>
+      <td class="a-nowrap a-mono">${escapeXml(u.account_number || '')}</td>
+      <td class="a-amt">${fmtMoney(u.balance)}</td>
+      <td>${u.twofa_enabled ? `<span class="a-badge a-badge-on" title="Two-factor authentication enabled">${Icons.shield} 2FA</span>` : '<span class="a-badge a-badge-off">2FA off</span>'}</td>
+      <td>${u.is_admin ? `<span class="a-badge a-badge-admin">${Icons.crown} Admin</span>` : (u.blocked ? '<span class="a-badge a-badge-blocked">Blocked</span>' : '<span class="a-badge a-badge-ok">Active</span>')}</td>
+      <td class="a-actions">${u.is_admin ? '' : (u.blocked ? `<button type="button" class="btn btn-soft btn-sm" data-unblock="${u.id}">${Icons.check} Unblock</button>` : `<button type="button" class="btn btn-danger-soft btn-sm" data-block="${u.id}">${Icons.lock} Block</button>`)}</td>
+    </tr>`).join('');
+  return `
+    <div class="a-toolbar">
+      <div class="a-search">${Icons.search}<input class="input" id="aUsersSearch" placeholder="Search name, username, phone, email or account..." value="${escapeAttr(q)}"></div>
+    </div>
+    <div class="a-scroll">
+      <table class="a-table">
+        <thead><tr><th>Customer</th><th>Phone</th><th>Account</th><th>Balance</th><th>Security</th><th>Status</th><th></th></tr></thead>
+        <tbody>${rows || `<tr><td colspan="7" class="a-empty">No customers found</td></tr>`}</tbody>
+      </table>
+    </div>`;
+}
+
+async function renderAdminTransactions(q = '') {
+  const list = await API.adminTransactions(q);
+  const rows = (list || []).map((t) => `
+    <tr>
+      <td class="a-nowrap">${fmtDate(t.created_at)}</td>
+      <td class="a-user-cell"><b>${escapeXml(t.user_name || '')}</b><span class="a-muted">@${escapeXml(t.user_username || '')}</span></td>
+      <td><span class="a-badge ${t.type === 'credit' ? 'a-badge-credit' : 'a-badge-debit'}">${t.type === 'credit' ? 'IN' : 'OUT'}</span> <span class="a-muted">${escapeXml(t.category || '')}</span></td>
+      <td class="a-nowrap a-muted">${escapeXml(t.counterparty || '—')}</td>
+      <td class="a-amt ${t.type === 'credit' ? 'a-pos' : 'a-neg'}">${t.type === 'credit' ? '+' : '−'}${fmtMoney(t.amount)}</td>
+      <td class="a-nowrap a-mono">${escapeXml(t.reference || '')}</td>
+    </tr>`).join('');
+  return `
+    <div class="a-toolbar">
+      <div class="a-search">${Icons.search}<input class="input" id="aTxSearch" placeholder="Search name, username, reference or amount..." value="${escapeAttr(q)}"></div>
+    </div>
+    <div class="a-scroll">
+      <table class="a-table">
+        <thead><tr><th>Date</th><th>Customer</th><th>Type</th><th>Counterparty</th><th>Amount</th><th>Reference</th></tr></thead>
+        <tbody>${rows || `<tr><td colspan="6" class="a-empty">No transactions found</td></tr>`}</tbody>
+      </table>
+    </div>`;
+}
+
+function bindAdmin() {
+  $$('.a-tab').forEach((btn) => {
+    btn.onclick = async () => {
+      State.adminTab = btn.dataset.atab;
+      const panel = $('#adminPanel');
+      try {
+        if (State.adminTab === 'overview') panel.innerHTML = renderAdminOverview(await API.adminOverview());
+        else if (State.adminTab === 'users') panel.innerHTML = await renderAdminUsers();
+        else panel.innerHTML = await renderAdminTransactions();
+      } catch (err) { toast(err.message, 'error'); }
+      bindAdminChildren();
+    };
+  });
+  bindAdminChildren();
+}
+
+function bindAdminChildren() {
+  const usersSearch = $('#aUsersSearch');
+  if (usersSearch) {
+    usersSearch.addEventListener('input', debounce(async () => {
+      const panel = $('#adminPanel');
+      try { panel.innerHTML = await renderAdminUsers(usersSearch.value.trim()); } catch (err) { toast(err.message, 'error'); }
+      bindAdminChildren();
+    }, 300));
+  }
+  const txSearch = $('#aTxSearch');
+  if (txSearch) {
+    txSearch.addEventListener('input', debounce(async () => {
+      const panel = $('#adminPanel');
+      try { panel.innerHTML = await renderAdminTransactions(txSearch.value.trim()); } catch (err) { toast(err.message, 'error'); }
+      bindAdminChildren();
+    }, 300));
+  }
+  $$('[data-block]').forEach((btn) => { btn.onclick = () => adminSetBlock(Number(btn.dataset.block), true); });
+  $$('[data-unblock]').forEach((btn) => { btn.onclick = () => adminSetBlock(Number(btn.dataset.unblock), false); });
+}
+
+async function adminSetBlock(id, block) {
+  const ok = await confirmAction(
+    block ? 'Block customer?' : 'Unblock customer?',
+    block ? 'They will be signed out and won\'t be able to sign in until you unblock them.' : 'You are restoring sign-in access for this customer.'
+  );
+  if (!ok) return;
+  try {
+    await (block ? API.adminBlock(id) : API.adminUnblock(id));
+    toast(block ? 'Account blocked' : 'Account unblocked', 'success');
+    router();
+  } catch (err) { toast(err.message, 'error'); }
+}
+
+function confirmAction(title, desc) {
+  return new Promise((resolve) => {
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.innerHTML = `
+      <div class="modal" style="max-width:400px; text-align:center;">
+        <div class="conf-icon" style="width:56px; height:56px; margin:0 auto 14px; border-radius:50%; background:var(--red-soft); color:var(--red); display:flex; align-items:center; justify-content:center;">${Icons.alert}</div>
+        <h3 class="modal-title" style="font-size:19px;">${title}</h3>
+        <p class="modal-desc" style="margin:8px auto 22px; max-width:300px;">${desc}</p>
+        <div style="display:flex; gap:10px;">
+          <button type="button" class="btn btn-ghost btn-block" id="caCancel">Cancel</button>
+          <button type="button" class="btn btn-navy btn-block" id="caOk">Confirm</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    const close = (val) => () => { overlay.remove(); resolve(val); };
+    $('#caCancel', overlay).onclick = close(false);
+    $('#caOk', overlay).onclick = close(true);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(false); });
+    setTimeout(() => $('#caOk', overlay).focus(), 80);
+  });
+}
+
 /* ---------------- Money movement animation ---------------- */
 function showMoneyAnimation({ type = 'send', amount, reference, receipt = null }) {
   return new Promise((resolve) => {
@@ -1454,6 +1639,7 @@ function bindRouteEvents(route) {
   if (route === 'notifications') bindNotifications();
   if (route === 'care') bindCare();
   if (route === 'me') bindMe();
+  if (route === 'admin') bindAdmin();
 
   // Eye toggles
   $$('[data-eye]').forEach((btn) => {

@@ -198,6 +198,14 @@ if (!columnExists('users', 'twofa_codes')) {
   db.exec('ALTER TABLE users ADD COLUMN twofa_codes TEXT');
 }
 
+// Migrations for the admin panel: admins + blocked accounts.
+if (!columnExists('users', 'is_admin')) {
+  db.exec('ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0');
+}
+if (!columnExists('users', 'blocked')) {
+  db.exec('ALTER TABLE users ADD COLUMN blocked INTEGER NOT NULL DEFAULT 0');
+}
+
 // Migrations for the account-identity feature: a unique username chosen at signup,
 // first/last names, and site-issued account numbers starting with "52".
 if (!columnExists('users', 'username')) {
@@ -333,5 +341,9 @@ if (userCount === 0) {
     }
   }
 }
+
+// Promote the seeded ADAEZE account to admin on every boot (idempotent), so
+// existing databases also get an administrator for the admin dashboard.
+db.prepare("UPDATE users SET is_admin = 1 WHERE email = 'adaeze@chasebank.test'").run();
 
 module.exports = db;
