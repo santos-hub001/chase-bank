@@ -1,6 +1,7 @@
 const path = require('node:path');
 
 const TURSO_URL = process.env.TURSO_DATABASE_URL;
+const TURSO_AUTH_TOKEN = process.env.TURSO_AUTH_TOKEN;
 const isTurso = Boolean(TURSO_URL);
 
 let db;
@@ -11,9 +12,29 @@ if (isTurso) {
   // (unlike a bare SQLite file on Render's ephemeral disk).
   const Database = require('libsql');
   const replicaPath = process.env.CHASE_BANK_DB || path.join(__dirname, '..', 'data', 'turso-replica.db');
+
+  // First, ensure the primary database has the latest schema by running
+  // migrations directly on the primary. This is needed because the embedded
+  // replica only receives schema changes from the primary, not vice versa.
+  const primary = new Database(TURSO_URL, { authToken: TURSO_AUTH_TOKEN });
+  const columnExistsPrimary = (table, column) => {
+    try {
+      return primary.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === column);
+    } catch {
+      return false;
+    }
+  };
+  if (!columnExistsPrimary('users', 'is_admin')) {
+    primary.exec('ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0');
+  }
+  if (!columnExistsPrimary('users', 'blocked')) {
+    primary.exec('ALTER TABLE users ADD COLUMN blocked INTEGER NOT NULL DEFAULT 0');
+  }
+  primary.close();
+
   db = new Database(replicaPath, {
     syncUrl: TURSO_URL,
-    authToken: process.env.TURSO_AUTH_TOKEN,
+    authToken: TURSO_AUTH_TOKEN,
     syncPeriod: 1
   });
   try {
