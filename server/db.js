@@ -16,21 +16,32 @@ if (isTurso) {
   // First, ensure the primary database has the latest schema by running
   // migrations directly on the primary. This is needed because the embedded
   // replica only receives schema changes from the primary, not vice versa.
+  console.log('[turso] Running primary migrations...');
   const primary = new Database(TURSO_URL, { authToken: TURSO_AUTH_TOKEN });
   const columnExistsPrimary = (table, column) => {
     try {
       return primary.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === column);
-    } catch {
+    } catch (err) {
+      console.error('[turso] columnExistsPrimary error:', err.message);
       return false;
     }
   };
   if (!columnExistsPrimary('users', 'is_admin')) {
+    console.log('[turso] Adding is_admin column to primary...');
     primary.exec('ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0');
+    console.log('[turso] is_admin column added');
+  } else {
+    console.log('[turso] is_admin column already exists on primary');
   }
   if (!columnExistsPrimary('users', 'blocked')) {
+    console.log('[turso] Adding blocked column to primary...');
     primary.exec('ALTER TABLE users ADD COLUMN blocked INTEGER NOT NULL DEFAULT 0');
+    console.log('[turso] blocked column added');
+  } else {
+    console.log('[turso] blocked column already exists on primary');
   }
   primary.close();
+  console.log('[turso] Primary migrations complete');
 
   db = new Database(replicaPath, {
     syncUrl: TURSO_URL,
