@@ -6,6 +6,21 @@ const QRCode = require('qrcode');
 const db = require('./db');
 const { generateSecret, verifyTotp, otpauthUrl, newBackupCodes, hashBackupCode } = require('./totp');
 
+app.get('/api/debug/schema', (req, res) => {
+  try {
+    const cols = db.prepare("PRAGMA table_info(users)").all();
+    const hasIsAdmin = cols.some(c => c.name === 'is_admin');
+    const hasBlocked = cols.some(c => c.name === 'blocked');
+    const sessionTest = req.cookiesToken ? db.prepare(`
+      SELECT u.id, u.username, u.is_admin, u.blocked FROM sessions s JOIN users u ON u.id = s.user_id
+      WHERE s.token = ? AND s.expires_at > ?
+    `).get(req.cookiesToken, new Date().toISOString()) : null;
+    res.json({ hasIsAdmin, hasBlocked, columns: cols.map(c => c.name), sessionTest });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 const app = express();
 
 app.use(express.json({ limit: '1mb' }));
