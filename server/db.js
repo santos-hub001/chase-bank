@@ -11,6 +11,7 @@ if (isTurso) {
   // Runtime data therefore survives restart, redeploys, and instance recycles
   // (unlike a bare SQLite file on Render's ephemeral disk).
   const Database = require('libsql');
+  const fs = require('node:fs');
   const replicaPath = process.env.CHASE_BANK_DB || path.join(__dirname, '..', 'data', 'turso-replica.db');
 
   // First, ensure the primary database has the latest schema by running
@@ -43,6 +44,14 @@ if (isTurso) {
   primary.close();
   console.log('[turso] Primary migrations complete');
 
+  // Delete local replica so it's recreated fresh from primary with new schema.
+  // The embedded replica doesn't reliably apply schema changes (ALTER TABLE)
+  // from primary to existing local file.
+  if (fs.existsSync(replicaPath)) {
+    console.log('[turso] Deleting old replica to force fresh sync from primary...');
+    fs.unlinkSync(replicaPath);
+  }
+
   db = new Database(replicaPath, {
     syncUrl: TURSO_URL,
     authToken: TURSO_AUTH_TOKEN,
@@ -50,6 +59,7 @@ if (isTurso) {
   });
   try {
     db.sync();
+    console.log('[turso] Initial sync complete');
   } catch (err) {
     console.error('Initial Turso sync failed (continuing with local replica):', err.message);
   }
