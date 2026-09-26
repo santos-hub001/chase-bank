@@ -348,7 +348,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   // non-admin cannot access the admin area or see the nav link
   dom.window.location.hash = '#/admin';
   await sleep(700);
-  check('admin: non-admin redirected away from admin', !dom.window.location.hash.includes('admin'));
+  check('admin: non-admin sent to customer care', dom.window.location.hash.includes('care'));
+  check('admin: care view shown for non-admin', /Customer Care/.test(doc.body.innerHTML));
   check('admin: no admin nav link for non-admin', !doc.body.innerHTML.includes('data-nav="admin"'));
 
   // log out femi and sign in as the seeded admin adaeze

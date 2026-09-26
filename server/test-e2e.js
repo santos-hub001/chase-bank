@@ -440,9 +440,9 @@ await page.click('#rcClose');
   console.log('21. Admin dashboard');
   // non-admin route guard
   await page.goto(BASE + '/#/admin', { waitUntil: 'networkidle2' });
-  await wait('.balance-card');
-  check('admin: non-admin redirected to dashboard', page.url().includes('dashboard'));
-  check('admin: admins-only toast shown', (await bodyText()).includes('Admins only'));
+  await wait('.care-grid');
+  check('admin: non-admin sent to customer care', page.url().includes('care'));
+  check('admin: care view shown for non-admin', /Customer Care/.test(await bodyText()));
   check('admin: no admin nav link for ugo', await page.$('[data-nav="admin"]') === null);
 
   // log out ugo, sign in as seeded admin adaeze

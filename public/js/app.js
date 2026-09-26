@@ -227,9 +227,7 @@ async function router() {
   }
 
   if (route === 'admin' && !State.user.is_admin) {
-    toast('Admins only', 'error');
-    State.user = null;
-    navigate('dashboard');
+    navigate('care');
     return;
   }
 
@@ -1124,8 +1122,7 @@ async function logoutUser() {
 /* ---------------- View: Admin ---------------- */
 async function viewAdmin() {
   if (!State.user.is_admin) {
-    toast('Admins only', 'error');
-    navigate('dashboard');
+    navigate('care');
     return '';
   }
   let panel;
