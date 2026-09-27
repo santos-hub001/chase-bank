@@ -159,7 +159,7 @@ function renderTopbar() {
         <a href="#/" data-nav="home"><span>Home</span></a>
         ${isAuthed ? `
           <a href="#/dashboard" data-nav="dashboard"><span>Dashboard</span></a>
-          <a href="#/send" data-nav="send"><span>Send</span></a>
+          ${State.user && State.user.is_admin ? '' : '<a href="#/send" data-nav="send"><span>Send</span></a>'}
           <a href="#/notifications" data-nav="notifications">${Icons.bell}${unreadBadge}<span style="position:relative;display:inline-flex;align-items:center;">&nbsp;Alerts</span></a>
           <a href="#/me" data-nav="me"><span>Me</span></a>
           ${State.user && State.user.is_admin ? `<a href="#/admin" data-nav="admin">${Icons.crown}<span style="position:relative;display:inline-flex;align-items:center;">&nbsp;Admin</span></a>` : ''}
@@ -181,7 +181,7 @@ function renderBottomNav() {
   <nav class="bottom-nav">
     <ul>
       <li><a href="#/dashboard" data-nav="dashboard">${Icons.home}<span>Home</span></a></li>
-      <li><a href="#/send" data-nav="send">${Icons.send}<span>Send</span></a></li>
+      ${State.user && State.user.is_admin ? '' : '<li><a href="#/send" data-nav="send">' + Icons.send + '<span>Send</span></a></li>'}
       <li><a href="#/notifications" data-nav="notifications" style="position:relative;">${Icons.bell}${unreadBadge}<span>Alerts</span></a></li>
       <li><a href="#/me" data-nav="me">${Icons.user}<span>Me</span></a></li>
       ${State.user && State.user.is_admin ? `<li><a href="#/admin" data-nav="admin">${Icons.crown}<span>Admin</span></a></li>` : ''}
@@ -228,6 +228,11 @@ async function router() {
 
   if (route === 'admin' && !State.user.is_admin) {
     navigate('care');
+    return;
+  }
+
+  if (['send', 'withdraw'].includes(route) && State.user.is_admin) {
+    navigate('admin');
     return;
   }
 
@@ -1129,10 +1134,11 @@ async function viewAdmin() {
   try {
     if (State.adminTab === 'users') panel = await renderAdminUsers();
     else if (State.adminTab === 'transactions') panel = await renderAdminTransactions();
+    else if (State.adminTab === 'complaints') panel = await renderAdminComplaints();
     else panel = renderAdminOverview(await API.adminOverview());
   } catch (err) {
     toast(err.message, 'error');
-    navigate('dashboard');
+    navigate('admin');
     return '';
   }
   return `
@@ -1146,6 +1152,7 @@ async function viewAdmin() {
       <button type="button" class="a-tab${State.adminTab === 'overview' ? ' active' : ''}" data-atab="overview">${Icons.card} Overview</button>
       <button type="button" class="a-tab${State.adminTab === 'users' ? ' active' : ''}" data-atab="users">${Icons.users} Users</button>
       <button type="button" class="a-tab${State.adminTab === 'transactions' ? ' active' : ''}" data-atab="transactions">${Icons.history} Transactions</button>
+      <button type="button" class="a-tab${State.adminTab === 'complaints' ? ' active' : ''}" data-atab="complaints">${Icons.chat} Complaints</button>
     </div>
     <div id="adminPanel">${panel}</div>
   </div>
@@ -1219,6 +1226,37 @@ async function renderAdminTransactions(q = '') {
     </div>`;
 }
 
+async function renderAdminComplaints(filter = 'all') {
+  const list = await API.adminMessages(filter === 'all' ? '' : filter);
+  const rows = (list || []).map((m) => `
+    <tr class="${m.status === 'open' ? '' : 'row-done'}">
+      <td class="a-nowrap">${fmtDate(m.created_at)}</td>
+      <td class="a-user-cell"><b>${escapeXml(m.user_name || '')}</b><span class="a-muted">@${escapeXml(m.user_username || '')}</span></td>
+      <td><b>${escapeXml(m.subject)}</b><div class="a-muted a-wrappable">${escapeXml(m.message)}</div></td>
+      <td>${m.status === 'open' ? '<span class="a-badge a-badge-open">Open</span>' : '<span class="a-badge a-badge-done">Resolved</span>'}</td>
+      <td class="a-actions">${m.status === 'open'
+        ? `<button type="button" class="btn btn-soft btn-sm" data-resolve="${m.id}">${Icons.check} Resolve</button>`
+        : `<button type="button" class="btn btn-outline btn-sm" data-reopen="${m.id}">${Icons.history} Reopen</button>`}</td>
+    </tr>`).join('');
+  const tabs = [
+    { key: 'all', label: 'All' },
+    { key: 'open', label: 'Open' },
+    { key: 'resolved', label: 'Resolved' }
+  ];
+  return `
+    <div class="a-toolbar">
+      <div class="a-filter">
+        ${tabs.map((t) => `<button type="button" class="a-fbtn${filter === t.key ? ' active' : ''}" data-afilter="${t.key}">${t.label}</button>`).join('')}
+      </div>
+    </div>
+    <div class="a-scroll">
+      <table class="a-table">
+        <thead><tr><th>Date</th><th>Customer</th><th>Complaint</th><th>Status</th><th></th></tr></thead>
+        <tbody>${rows || `<tr><td colspan="5" class="a-empty">No complaints found</td></tr>`}</tbody>
+      </table>
+    </div>`;
+}
+
 function bindAdmin() {
   $$('.a-tab').forEach((btn) => {
     btn.onclick = async () => {
@@ -1227,6 +1265,7 @@ function bindAdmin() {
       try {
         if (State.adminTab === 'overview') panel.innerHTML = renderAdminOverview(await API.adminOverview());
         else if (State.adminTab === 'users') panel.innerHTML = await renderAdminUsers();
+        else if (State.adminTab === 'complaints') panel.innerHTML = await renderAdminComplaints();
         else panel.innerHTML = await renderAdminTransactions();
       } catch (err) { toast(err.message, 'error'); }
       bindAdminChildren();
@@ -1252,6 +1291,15 @@ function bindAdminChildren() {
       bindAdminChildren();
     }, 300));
   }
+  $$('[data-afilter]').forEach((btn) => {
+    btn.onclick = async () => {
+      const panel = $('#adminPanel');
+      try { panel.innerHTML = await renderAdminComplaints(btn.dataset.afilter); } catch (err) { toast(err.message, 'error'); }
+      bindAdminChildren();
+    };
+  });
+  $$('[data-resolve]').forEach((btn) => { btn.onclick = () => adminSetMessage(Number(btn.dataset.resolve), true); });
+  $$('[data-reopen]').forEach((btn) => { btn.onclick = () => adminSetMessage(Number(btn.dataset.reopen), false); });
   $$('[data-block]').forEach((btn) => { btn.onclick = () => adminSetBlock(Number(btn.dataset.block), true); });
   $$('[data-unblock]').forEach((btn) => { btn.onclick = () => adminSetBlock(Number(btn.dataset.unblock), false); });
 }
@@ -1265,6 +1313,19 @@ async function adminSetBlock(id, block) {
   try {
     await (block ? API.adminBlock(id) : API.adminUnblock(id));
     toast(block ? 'Account blocked' : 'Account unblocked', 'success');
+    router();
+  } catch (err) { toast(err.message, 'error'); }
+}
+
+async function adminSetMessage(id, resolve) {
+  const ok = await confirmAction(
+    resolve ? 'Mark complaint as resolved?' : 'Reopen complaint?',
+    resolve ? 'You are closing this complaint as resolved.' : 'You are reopening this complaint for follow-up.'
+  );
+  if (!ok) return;
+  try {
+    await (resolve ? API.adminResolveMessage(id) : API.adminReopenMessage(id));
+    toast(resolve ? 'Complaint resolved' : 'Complaint reopened', 'success');
     router();
   } catch (err) { toast(err.message, 'error'); }
 }
@@ -1709,7 +1770,7 @@ function bindLogin() {
         return;
       }
       toast('Welcome back to Chase Bank', 'success');
-      navigate('dashboard');
+      navigate(r.is_admin ? 'admin' : 'dashboard');
     } catch (err) {
       showFormError('loginError', err.message);
       btn.disabled = false;
@@ -1730,10 +1791,10 @@ function bindTwofaStep() {
     btn.disabled = true;
     btn.innerHTML = '<span class="spinner"></span> Verifying...';
     try {
-      await API.twofaVerify({ token: State.twofaToken, code });
+      const r = await API.twofaVerify({ token: State.twofaToken, code });
       State.twofaToken = null;
       toast('Welcome back to Chase Bank', 'success');
-      navigate('dashboard');
+      navigate(r.is_admin ? 'admin' : 'dashboard');
     } catch (err) {
       showFormError('twofaError', err.message);
       $('#twofaCode').value = '';

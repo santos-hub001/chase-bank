@@ -57,9 +57,13 @@ Production dependencies: `qrcode` (authenticator QR codes) + `puppeteer-core` fo
   password login
 - **Admin dashboard** (seeded ADAEZE account): bank-wide overview (customers,
   total balance, money-in, withdrawals, transfers, transactions, accounts,
-  admins, blocked), customer listing with search (name, phone, email, account,
-  username), transaction log with search, and block/unblock actions (admins
-  protected, self-block prevented)
+  admins, blocked, open complaints), customer listing with search (name, phone,
+  email, account, username), transaction log with search, block/unblock actions
+  (admins protected, self-block prevented), and a **Complaints** tab that
+  receives every customer-care message and lets the admin resolve or reopen it
+- **Admin control center**: administrators sign in straight to the admin
+  dashboard, cannot perform transfers/withdrawals (403), and see no Send
+  action; non-admins who visit `#/admin` are routed to Customer Care instead
 - Send Money / Withdraw: choose which account to send from or withdraw against
 - Logout with confirmation (from dashboard or the topbar icon)
 
@@ -97,9 +101,9 @@ The signup flow also generates a `demo_otp` code on the page for verification.
 
 ```bash
 # backend API contract suite
-node server/test-backend.js      # 86 backend API checks
-node server/test-frontend.js     # 86 jsdom checks
-node server/test-e2e.js          # 105 headless-Chrome checks
+node server/test-backend.js      # 99 backend API checks
+node server/test-frontend.js     # 93 jsdom checks
+node server/test-e2e.js          # 111 headless-Chrome checks
 
 # full browser E2E (starts its own clean DB; needs the server on :3000)
 node server/test-e2e.js

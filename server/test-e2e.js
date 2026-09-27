@@ -455,9 +455,10 @@ await page.click('#rcClose');
   await setVal('#loginIdentifier', 'adaeze');
   await setVal('#loginPassword', 'chase123');
   await page.click('#loginBtn');
-  await wait('.balance-card', { timeout: 20000 });
-  check('admin: adaeze signs in', page.url().includes('dashboard'));
+  await wait('.a-stat', { timeout: 20000 });
+  check('admin: adaeze lands on admin dashboard', page.url().includes('admin'));
   check('admin: admin nav link visible', await page.$('[data-nav="admin"]') !== null);
+  check('admin: no send link for admin', await page.$('[data-nav="send"]') === null);
 
   await page.goto(BASE + '/#/admin', { waitUntil: 'networkidle2' });
   await wait('.a-stat');
@@ -475,6 +476,44 @@ await page.click('#rcClose');
   await wait('#aTxSearch');
   await wait('.a-table');
   check('admin: welcome bonus tx visible', (await bodyText()).includes('WELCOME_BONUS'));
+
+  // complaints tab shows customer-care messages
+  await page.click('[data-atab="complaints"]');
+  await wait('[data-afilter]');
+  await wait('.a-table');
+  check('admin: complaint from care visible', (await bodyText()).includes('Card issue'));
+  const resolvedAfter = await page.evaluate(async () => {
+    const row = [...document.querySelectorAll('.a-table tbody tr')].find((tr) => tr.textContent.includes('Card issue'));
+    const btn = row && row.querySelector('[data-resolve]');
+    if (!btn) return false;
+    btn.click();
+    await new Promise((r) => setTimeout(r, 300));
+    const okBtn = document.querySelector('#caOk');
+    if (!okBtn) return false;
+    okBtn.click();
+    return true;
+  });
+  check('admin: resolve complaint clicked', resolvedAfter);
+  const compResolved = await page.waitForFunction(() => {
+    const row = [...document.querySelectorAll('.a-table tbody tr')].find((tr) => tr.textContent.includes('Card issue'));
+    return row && !!row.querySelector('[data-reopen]') && /Resolved/i.test(row.textContent);
+  }, { timeout: 15000 }).then(() => true).catch(() => false);
+  check('admin: complaint shown resolved', compResolved);
+  const reopenClicked = await page.evaluate(() => {
+    const row = [...document.querySelectorAll('.a-table tbody tr')].find((tr) => tr.textContent.includes('Card issue'));
+    const btn = row && row.querySelector('[data-reopen]');
+    if (!btn) return false;
+    btn.click();
+    return true;
+  });
+  check('admin: reopen action available', reopenClicked);
+  await wait('.modal-overlay');
+  await page.click('#caOk');
+  const compOpenAgain = await page.waitForFunction(() => {
+    const row = [...document.querySelectorAll('.a-table tbody tr')].find((tr) => tr.textContent.includes('Card issue'));
+    return row && !!row.querySelector('[data-resolve]') && /Open/i.test(row.textContent);
+  }, { timeout: 15000 }).then(() => true).catch(() => false);
+  check('admin: complaint reopened to open', compOpenAgain);
 
   // block tunde through the UI
   await page.click('[data-atab="users"]');
@@ -512,7 +551,7 @@ await page.click('#rcClose');
   await setVal('#loginIdentifier', 'adaeze');
   await setVal('#loginPassword', 'chase123');
   await page.click('#loginBtn');
-  await wait('.balance-card', { timeout: 20000 });
+  await wait('[data-atab="users"]', { timeout: 20000 });
   await page.goto(BASE + '/#/admin', { waitUntil: 'networkidle2' });
   await wait('[data-atab="users"]');
   await page.click('[data-atab="users"]');

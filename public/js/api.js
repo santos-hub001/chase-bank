@@ -45,5 +45,8 @@ const API = {
   adminUsers: (q) => api('/api/admin/users' + (q ? '?q=' + encodeURIComponent(q) : '')),
   adminTransactions: (q) => api('/api/admin/transactions' + (q ? '?q=' + encodeURIComponent(q) : '')),
   adminBlock: (id) => api('/api/admin/users/' + id + '/block', { method: 'POST' }),
-  adminUnblock: (id) => api('/api/admin/users/' + id + '/unblock', { method: 'POST' })
+  adminUnblock: (id) => api('/api/admin/users/' + id + '/unblock', { method: 'POST' }),
+  adminMessages: (filter) => api('/api/admin/messages' + (filter ? '?filter=' + encodeURIComponent(filter) : '')),
+  adminResolveMessage: (id) => api('/api/admin/messages/' + id + '/resolve', { method: 'POST' }),
+  adminReopenMessage: (id) => api('/api/admin/messages/' + id + '/reopen', { method: 'POST' })
 };

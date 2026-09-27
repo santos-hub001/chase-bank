@@ -1534,6 +1534,25 @@ select.input {
 .a-muted { color: var(--muted); font-size: 12.5px; }
 .a-actions { white-space: nowrap; text-align: right; }
 .a-actions .btn-sm { padding: 6px 12px; font-size: 12px; }
+.a-badge-open { background: var(--gold-soft); color: #A8862E; }
+.a-badge-done { background: var(--green-soft); color: var(--green); }
+.a-table tbody tr.row-done { opacity: 0.66; }
+.a-table tbody tr.row-done:hover { opacity: 1; }
+.a-wrappable { white-space: normal; max-width: 420px; }
+.a-filter { display: flex; gap: 6px; flex-wrap: wrap; }
+.a-fbtn {
+  border: 1px solid var(--border, rgba(10, 34, 74, 0.15));
+  background: transparent;
+  color: var(--muted);
+  padding: 7px 14px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.a-fbtn.active { background: var(--navy); border-color: var(--navy); color: #fff; }
+[data-theme="dark"] .a-fbtn { border-color: #31507E; }
+[data-theme="dark"] .a-fbtn.active { background: #ffffff22; border-color: #ffffff55; color: #fff; }
 
 @media (max-width: 560px) {
   .a-stats { grid-template-columns: repeat(2, 1fr); gap: 10px; }

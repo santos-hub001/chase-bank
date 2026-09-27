@@ -162,6 +162,10 @@ function adminOnly(req) {
   return { user };
 }
 
+function isAdmin(user) {
+  return !!(user && user.is_admin);
+}
+
 function userAccounts(userId) {
   return db.prepare('SELECT * FROM accounts WHERE user_id = ? ORDER BY is_default DESC, id ASC').all(userId);
 }
@@ -352,7 +356,7 @@ app.post('/api/auth/login', (req, res) => {
   const token = createSession(user.id);
   setAuthCookie(res, token);
 
-  res.json({ message: 'Login successful', account_number: user.account_number });
+  res.json({ message: 'Login successful', account_number: user.account_number, is_admin: !!user.is_admin });
 });
 
 app.post('/api/auth/2fa/verify', (req, res) => {
@@ -380,7 +384,7 @@ app.post('/api/auth/2fa/verify', (req, res) => {
   pending2FA.delete(token);
   const session = createSession(user.id);
   setAuthCookie(res, session);
-  res.json({ message: 'Login successful', account_number: user.account_number });
+  res.json({ message: 'Login successful', account_number: user.account_number, is_admin: !!user.is_admin });
 });
 
 app.post('/api/auth/2fa/setup', async (req, res) => {
@@ -458,7 +462,8 @@ app.get('/api/admin/overview', (req, res) => {
   const withdrawals = round2(db.prepare("SELECT COALESCE(SUM(amount), 0) AS t FROM transactions WHERE type = 'debit' AND category = 'WITHDRAWAL'").get().t);
   const transfers = round2(db.prepare("SELECT COALESCE(SUM(amount), 0) AS t FROM transactions WHERE category = 'TRANSFER'").get().t);
   const transactions = db.prepare('SELECT COUNT(*) AS c FROM transactions').get().c;
-  res.json({ users, admins, blocked, accounts, total_balance: totalBalance, money_in: moneyIn, withdrawals, transfers, transactions });
+  const openMessages = db.prepare("SELECT COUNT(*) AS c FROM messages WHERE status = 'open'").get().c;
+  res.json({ users, admins, blocked, accounts, total_balance: totalBalance, money_in: moneyIn, withdrawals, transfers, transactions, open_messages: openMessages });
 });
 
 app.get('/api/admin/users', (req, res) => {
@@ -523,6 +528,42 @@ app.post('/api/admin/users/:id/unblock', (req, res) => {
   res.json({ message: 'Account unblocked', blocked: false, id: target.id });
 });
 
+app.get('/api/admin/messages', (req, res) => {
+  const guard = adminOnly(req);
+  if (guard.error) return res.status(guard.status).json({ error: guard.error });
+  const filter = String(req.query.filter || 'all').trim();
+  const base = `
+    SELECT m.id, m.user_id, m.subject, m.message, m.status, m.created_at,
+           u.full_name AS user_name, u.username AS user_username, u.email AS user_email, u.account_number
+    FROM messages m JOIN users u ON u.id = m.user_id
+  `;
+  let rows;
+  if (filter === 'open' || filter === 'resolved') {
+    rows = db.prepare(base + 'WHERE m.status = ? ORDER BY m.id DESC').all(filter);
+  } else {
+    rows = db.prepare(base + 'ORDER BY m.id DESC').all();
+  }
+  res.json(rows.map((m) => ({ ...m, status: m.status || 'open' })));
+});
+
+app.post('/api/admin/messages/:id/resolve', (req, res) => {
+  const guard = adminOnly(req);
+  if (guard.error) return res.status(guard.status).json({ error: guard.error });
+  const target = db.prepare('SELECT * FROM messages WHERE id = ?').get(Number(req.params.id));
+  if (!target) return res.status(404).json({ error: 'Message not found' });
+  db.prepare("UPDATE messages SET status = 'resolved' WHERE id = ?").run(target.id);
+  res.json({ message: 'Complaint marked as resolved', id: target.id, status: 'resolved' });
+});
+
+app.post('/api/admin/messages/:id/reopen', (req, res) => {
+  const guard = adminOnly(req);
+  if (guard.error) return res.status(guard.status).json({ error: guard.error });
+  const target = db.prepare('SELECT * FROM messages WHERE id = ?').get(Number(req.params.id));
+  if (!target) return res.status(404).json({ error: 'Message not found' });
+  db.prepare("UPDATE messages SET status = 'open' WHERE id = ?").run(target.id);
+  res.json({ message: 'Complaint reopened', id: target.id, status: 'open' });
+});
+
 app.post('/api/auth/logout', (req, res) => {
   destroySession(req.cookiesToken);
   res.clearCookie('chase_session');
@@ -561,6 +602,7 @@ app.get('/api/transactions', (req, res) => {
 app.post('/api/transfer', (req, res) => {
   const user = getSessionUser(req);
   if (!user) return res.status(401).json({ error: 'Not authenticated' });
+  if (isAdmin(user)) return res.status(403).json({ error: 'Admins cannot perform transactions' });
 
   const { recipient, amount, pin, description, account_id } = req.body || {};
   const accNum = String(recipient || '').trim().replace(/\s+/g, '');
@@ -637,6 +679,7 @@ app.post('/api/transfer', (req, res) => {
 app.post('/api/withdraw', (req, res) => {
   const user = getSessionUser(req);
   if (!user) return res.status(401).json({ error: 'Not authenticated' });
+  if (isAdmin(user)) return res.status(403).json({ error: 'Admins cannot perform transactions' });
 
   const { amount, pin, account_id } = req.body || {};
   const amt = sanitizeAmount(amount);

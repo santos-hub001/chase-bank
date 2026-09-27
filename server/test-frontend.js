@@ -365,13 +365,14 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   doc.querySelector('#loginPassword').value = 'chase123';
   doc.querySelector('#loginBtn').click();
   await sleep(1200);
-  check('admin: adaeze login lands on dashboard', dom.window.location.hash.includes('dashboard'));
+  check('admin: adaeze login lands on admin dashboard', dom.window.location.hash.includes('admin'));
   check('admin: admin nav link visible for admin', !!doc.querySelector('[data-nav="admin"]'));
 
   dom.window.location.hash = '#/admin';
   check('admin: overview stats render', await waitForCond(() => doc.querySelectorAll('.a-stat').length >= 5));
   check('admin: customers stat present', /Customers/.test(doc.body.innerHTML));
   check('admin: total balance stat present', /Total Balance/.test(doc.body.innerHTML));
+  check('admin: no send link visible to admin', !doc.body.innerHTML.includes('data-nav="send"'));
 
   // users tab
   doc.querySelector('[data-atab="users"]')?.click();
@@ -405,6 +406,21 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   doc.querySelector('[data-atab="transactions"]')?.click();
   check('admin: transactions table renders', await waitForCond(() => !!doc.querySelector('#aTxSearch') && doc.querySelectorAll('.a-table tbody tr').length >= 1));
   check('admin: welcome bonus tx visible', /WELCOME_BONUS/.test(doc.body.innerHTML));
+
+  // complaints tab
+  doc.querySelector('[data-atab="complaints"]')?.click();
+  check('admin: complaints table renders', await waitForCond(() => !!doc.querySelector('[data-afilter]') && doc.querySelectorAll('.a-table tbody tr').length >= 1));
+  check('admin: complaint subject visible', /Test issue/.test(doc.body.innerHTML));
+  const compRow = [...doc.querySelectorAll('.a-table tbody tr')].find((tr) => tr.textContent.includes('Test issue'));
+  const resolveBtn = compRow && compRow.querySelector('[data-resolve]');
+  check('admin: resolve action available for open complaint', !!resolveBtn);
+  resolveBtn?.click();
+  check('admin: resolve confirm modal opens', await waitFor('#caOk'));
+  doc.querySelector('#caOk').click();
+  check('admin: complaint shown resolved after confirm', await waitForCond(() => {
+    const row = [...doc.querySelectorAll('.a-table tbody tr')].find((tr) => tr.textContent.includes('Test issue'));
+    return row && !!row.querySelector('[data-reopen]') && /Resolved/.test(row.textContent);
+  }));
 
   // back to overview tab
   doc.querySelector('[data-atab="overview"]')?.click();

@@ -274,6 +274,36 @@ function check(name, cond, extra = '') {
   r = await req('/api/admin/users/' + adaezeRow.id + '/block', { method: 'POST' }, admin);
   check('admin: cannot block self', r.status === 400);
 
+  console.log('21b. Admin cannot perform transactions');
+  r = await req('/api/transfer', { method: 'POST', body: { recipient: '5200000001', amount: 100, pin: '4321' } }, admin);
+  check('admin: transfer blocked 403', r.status === 403 && /cannot perform transactions/i.test(r.data.error), JSON.stringify(r.data));
+  r = await req('/api/withdraw', { method: 'POST', body: { amount: 100, pin: '4321' } }, admin);
+  check('admin: withdraw blocked 403', r.status === 403 && /cannot perform transactions/i.test(r.data.error), JSON.stringify(r.data));
+  r = await req('/api/account', {}, admin);
+  check('admin: balance unchanged after blocked attempts', r.status === 200 && r.data.balance === 47500, 'balance=' + (r.data && r.data.balance));
+
+  console.log('21c. Admin complaints (customer care)');
+  r = await req('/api/admin/messages', {}, admin);
+  check('admin: messages list 200 (empty ok)', r.status === 200 && Array.isArray(r.data), JSON.stringify((r.data || []).slice(0, 2)));
+  r = await req('/api/customer-care', { method: 'POST', body: { subject: 'Frozen card', message: 'My card is stuck and I cannot pay for anything anywhere.' } }, kemi);
+  check('care: kemi sends a complaint', r.status === 201 || r.status === 200);
+  r = await req('/api/admin/messages', {}, admin);
+  check('admin: messages list contains complaint', r.status === 200 && r.data.length >= 1 && r.data[0].subject === 'Frozen card', JSON.stringify(r.data[0]));
+  const msgId = r.data[0].id;
+  check('admin: complaint joined with user', r.data[0].user_name && r.data[0].user_username === 'kemi', JSON.stringify(r.data[0]));
+  r = await req('/api/admin/messages?filter=open', {}, admin);
+  check('admin: open filter works', r.status === 200 && r.data.some((m) => m.id === msgId && m.status === 'open'));
+  r = await req('/api/admin/messages/' + msgId + '/resolve', { method: 'POST' }, admin);
+  check('admin: resolve complaint 200', r.status === 200 && r.data.status === 'resolved');
+  r = await req('/api/admin/messages?filter=open', {}, admin);
+  check('admin: resolved complaint leaves open filter', r.status === 200 && !r.data.some((m) => m.id === msgId));
+  r = await req('/api/admin/messages/' + msgId + '/reopen', { method: 'POST' }, admin);
+  check('admin: reopen complaint 200', r.status === 200 && r.data.status === 'open');
+  r = await req('/api/admin/messages', {}, kemi);
+  check('admin: non-admin messages 403', r.status === 403);
+  r = await req('/api/admin/overview', {}, admin);
+  check('admin: overview reports open complaints', r.status === 200 && r.data.open_messages >= 1, 'open_messages=' + (r.data && r.data.open_messages));
+
   console.log('');
   console.log(`RESULT: ${okCount} passed, ${failCount} failed`);
   process.exit(failCount > 0 ? 1 : 0);
