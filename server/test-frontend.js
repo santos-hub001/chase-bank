@@ -367,6 +367,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await sleep(1200);
   check('admin: adaeze login lands on admin dashboard', dom.window.location.hash.includes('admin'));
   check('admin: admin nav link visible for admin', !!doc.querySelector('[data-nav="admin"]'));
+  dom.window.location.hash = '#/dashboard';
+  await sleep(700);
+  check('admin: dashboard route blocked for admin', dom.window.location.hash.includes('admin'));
+  check('admin: no customer dashboard for admin', !doc.body.innerHTML.includes('balance-card'));
 
   dom.window.location.hash = '#/admin';
   check('admin: overview stats render', await waitForCond(() => doc.querySelectorAll('.a-stat').length >= 5));

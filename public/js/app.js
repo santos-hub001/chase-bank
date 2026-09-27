@@ -231,13 +231,13 @@ async function router() {
     return;
   }
 
-  if (['send', 'withdraw'].includes(route) && State.user.is_admin) {
+  if (['send', 'withdraw', 'dashboard'].includes(route) && State.user.is_admin) {
     navigate('admin');
     return;
   }
 
   if (['login', 'signup'].includes(route) && State.user) {
-    navigate('dashboard');
+    navigate(State.user.is_admin ? 'admin' : 'dashboard');
     return;
   }
 

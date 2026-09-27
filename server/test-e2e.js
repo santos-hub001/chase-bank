@@ -460,6 +460,10 @@ await page.click('#rcClose');
   check('admin: admin nav link visible', await page.$('[data-nav="admin"]') !== null);
   check('admin: no send link for admin', await page.$('[data-nav="send"]') === null);
 
+  await page.goto(BASE + '/#/dashboard', { waitUntil: 'networkidle2' });
+  await page.waitForFunction(() => location.hash.includes('admin'), { timeout: 15000 });
+  check('admin: dashboard route blocked for admin', page.url().includes('admin'));
+
   await page.goto(BASE + '/#/admin', { waitUntil: 'networkidle2' });
   await wait('.a-stat');
   check('admin: overview stats render', (await page.$$('.a-stat')).length >= 5);
